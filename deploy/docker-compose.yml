@@ -1,0 +1,11 @@
+# FlareSolverr gets 1337cli past 1337x's Cloudflare check.
+# Start with: docker compose up -d
+services:
+  flaresolverr:
+    image: ghcr.io/flaresolverr/flaresolverr:latest
+    container_name: flaresolverr
+    ports:
+      - "127.0.0.1:8191:8191"
+    environment:
+      - LOG_LEVEL=info
+    restart: unless-stopped

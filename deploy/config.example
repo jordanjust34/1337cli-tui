@@ -1,0 +1,22 @@
+# 1337cli settings. Installed to ~/.config/1337cli/config.
+# Environment variables and command-line flags override these.
+
+# FlareSolverr (from docker-compose.yml in this folder)
+FLARESOLVERR_URL=http://localhost:8191
+
+# qBittorrent Web UI. Use localhost if it runs on this machine.
+QBIT_URL=http://localhost:8080
+QBIT_USER=admin
+QBIT_PASS=
+
+# Default qBittorrent category for downloads. Give each category a save path
+# inside a Jellyfin library in qBittorrent (right-click the category > Edit),
+# e.g. movies -> /media/movies, tv -> /media/tv. Override per download with -c.
+QBIT_CATEGORY=
+
+# Fixed download folder on the qBittorrent server (overrides the category's path).
+# Usually left empty when categories are set up.
+QBIT_SAVE_PATH=
+
+# 1337x mirror, if the default stops working.
+# LEET_MIRROR=https://1337x.to

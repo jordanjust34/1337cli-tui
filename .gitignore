@@ -1,0 +1,16 @@
+# Build output
+/1337cli
+/1337tui
+/dist/
+
+# Config / secrets
+.env
+*.env
+config
+!deploy/config.example
+
+# Stray scp/ssh artifacts
+*@*
+
+# OS / editor
+.DS_Store
