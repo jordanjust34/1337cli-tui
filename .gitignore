@@ -14,3 +14,6 @@ config
 
 # OS / editor
 .DS_Store
+
+# Local-only server details (see AGENTS.md)
+SERVER.md
