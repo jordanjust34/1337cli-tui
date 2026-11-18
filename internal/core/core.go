@@ -8,6 +8,7 @@ import (
 	"errors"
 	"fmt"
 	"net/url"
+	"sort"
 	"strings"
 
 	"1337cli/internal/qbit"
@@ -109,6 +110,15 @@ func (s *Service) qbit() (*qbit.Client, error) {
 	return qbit.NewClient(s.Config.QbitURL, s.Config.QbitUser, s.Config.QbitPass), nil
 }
 
+// Ping logs in and returns qBittorrent's version, so front ends can fail before a slow search.
+func (s *Service) Ping() (string, error) {
+	qc, err := s.qbit()
+	if err != nil {
+		return "", err
+	}
+	return qc.Version()
+}
+
 // Categories lists the qBittorrent categories, sorted by name.
 func (s *Service) Categories() ([]Category, error) {
 	qc, err := s.qbit()
@@ -116,6 +126,23 @@ func (s *Service) Categories() ([]Category, error) {
 		return nil, err
 	}
 	return qc.Categories()
+}
+
+// Best returns the n results with the most seeders (ties keep source order); n <= 0 means 1.
+// It sorts a copy, so the caller's slice keeps its order.
+func Best(results []Result, n int) []Result {
+	if len(results) == 0 {
+		return nil
+	}
+	if n <= 0 {
+		n = 1
+	}
+	sorted := append([]Result(nil), results...)
+	sort.SliceStable(sorted, func(i, j int) bool { return sorted[i].Seeders > sorted[j].Seeders })
+	if n < len(sorted) {
+		sorted = sorted[:n]
+	}
+	return sorted
 }
 
 // Outcome is what happened to one submitted target.

@@ -199,3 +199,65 @@ func TestSubmitContinuesPastFailures(t *testing.T) {
 		t.Fatalf("err = %v, want ErrNoQbit", err)
 	}
 }
+
+func TestBest(t *testing.T) {
+	in := []Result{
+		{Name: "a", Seeders: 5},
+		{Name: "b", Seeders: 9},
+		{Name: "c", Seeders: 5},
+		{Name: "d", Seeders: 1},
+	}
+	orig := append([]Result(nil), in...)
+
+	for _, tc := range []struct {
+		n    int
+		want []string
+	}{
+		{1, []string{"b"}},
+		{3, []string{"b", "a", "c"}}, // a and c tie; source order kept
+		{10, []string{"b", "a", "c", "d"}},
+		{0, []string{"b"}},
+		{-2, []string{"b"}},
+	} {
+		if got := names(Best(in, tc.n)); !reflect.DeepEqual(got, tc.want) {
+			t.Errorf("Best(n=%d) = %v, want %v", tc.n, got, tc.want)
+		}
+	}
+	if !reflect.DeepEqual(in, orig) {
+		t.Errorf("Best reordered the input: %v", names(in))
+	}
+	if got := Best(nil, 3); len(got) != 0 {
+		t.Errorf("Best(nil) = %v, want empty", got)
+	}
+}
+
+func TestPing(t *testing.T) {
+	qb := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Path {
+		case "/api/v2/auth/login":
+			r.ParseForm()
+			if r.Form.Get("password") != "secret" {
+				w.Write([]byte("Fails."))
+				return
+			}
+			http.SetCookie(w, &http.Cookie{Name: "SID", Value: "s"})
+			w.Write([]byte("Ok."))
+		case "/api/v2/app/version":
+			w.Write([]byte("v5.0.0"))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer qb.Close()
+
+	v, err := New(Config{QbitURL: qb.URL, QbitUser: "admin", QbitPass: "secret"}).Ping()
+	if err != nil || v != "v5.0.0" {
+		t.Fatalf("Ping = %q, %v; want v5.0.0", v, err)
+	}
+	if _, err := New(Config{QbitURL: qb.URL, QbitUser: "admin", QbitPass: "wrong"}).Ping(); err == nil {
+		t.Error("wrong password should be an error")
+	}
+	if _, err := New(Config{}).Ping(); !errors.Is(err, ErrNoQbit) {
+		t.Fatalf("err = %v, want ErrNoQbit", err)
+	}
+}
