@@ -15,7 +15,7 @@ for name in 1337cli 1337tui; do
 done
 
 # System-wide if possible (sudo may prompt for a password), otherwise per-user.
-# Both binaries go in the same folder so 1337tui finds 1337cli next to it.
+# Both binaries are independent; each reads the config file below.
 if [ -w /usr/local/bin ]; then
   dir=/usr/local/bin; sudo=
 elif command -v sudo >/dev/null 2>&1; then

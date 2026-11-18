@@ -8,7 +8,7 @@ import (
 	"strings"
 	"text/tabwriter"
 
-	"1337cli/internal/scraper"
+	"1337cli/internal/core"
 
 	"github.com/spf13/cobra"
 )
@@ -59,14 +59,14 @@ var rootCmd = &cobra.Command{
 			return errNoQbit
 		}
 
-		c := newScraper()
-		results, err := collect(c, query, page, limit)
+		s := newService()
+		results, err := s.Search(query, page, limit)
 		if err != nil {
-			return explain(err)
+			return err
 		}
 		if jsonOut {
 			if results == nil {
-				results = []scraper.Result{} // encode as [] rather than null
+				results = []core.Result{} // encode as [] rather than null
 			}
 			return json.NewEncoder(os.Stdout).Encode(results)
 		}
@@ -87,67 +87,11 @@ var rootCmd = &cobra.Command{
 			urls = append(urls, results[i-1].URL)
 		}
 		fmt.Println()
-		return sendToQbit(c, urls)
+		return sendToQbit(s, urls)
 	},
 }
 
-func newScraper() *scraper.Client {
-	c := scraper.NewClient(mirror)
-	c.FlareSolver = flareURL
-	c.Cookie = cookie
-	if userAgent != "" {
-		c.UserAgent = userAgent
-	}
-	return c
-}
-
-// explain adds remediation hints to a Cloudflare challenge error.
-func explain(err error) error {
-	if errors.Is(err, scraper.ErrChallenge) {
-		return fmt.Errorf("%w\n\n%s fronts the site with a Cloudflare challenge. Either:\n"+
-			"  - run FlareSolverr and pass --flaresolverr http://localhost:8191 (or set FLARESOLVERR_URL), or\n"+
-			"  - pass --cookie 'cf_clearance=...' and --user-agent copied from a browser that passed the check", err, mirror)
-	}
-	return err
-}
-
-// pageSize is how many entries 1337x shows per search page; a shorter page is the last one.
-const pageSize = 20
-
-// collect fetches results starting at page until it has limit entries or runs
-// out of pages. A limit of 0 means a single page.
-func collect(c *scraper.Client, query string, page, limit int) ([]scraper.Result, error) {
-	var all []scraper.Result
-	for p := page; ; p++ {
-		results, err := c.Search(query, p)
-		// 1337x occasionally serves an empty table mid-pagination; retry once
-		// before treating an empty later page as the end of the results.
-		if err == nil && len(results) == 0 && len(all) > 0 {
-			results, err = c.Search(query, p)
-			if err == nil && len(results) == 0 {
-				fmt.Fprintf(os.Stderr, "warning: page %d returned no results; stopping at %d entries\n", p, len(all))
-			}
-		}
-		if err != nil {
-			// Keep what we already have if a later page fails.
-			if len(all) > 0 {
-				fmt.Fprintf(os.Stderr, "warning: stopped at page %d: %v\n", p, err)
-				break
-			}
-			return nil, err
-		}
-		all = append(all, results...)
-		if limit == 0 || len(all) >= limit || len(results) < pageSize {
-			break
-		}
-	}
-	if limit > 0 && len(all) > limit {
-		all = all[:limit]
-	}
-	return all, nil
-}
-
-func printResults(results []scraper.Result) {
+func printResults(results []core.Result) {
 	w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
 	fmt.Fprintln(w, "#\tNAME\tSE\tLE\tSIZE\tDATE\tUPLOADER")
 	for i, r := range results {
@@ -174,11 +118,11 @@ func init() {
 	f.StringVarP(&searchQuery, "search", "s", "", "search query")
 	f.IntVarP(&page, "page", "p", 1, "results page to start from")
 	f.IntVarP(&limit, "limit", "n", 0, "number of entries to return, fetching more pages as needed (0 = one page)")
-	f.BoolVar(&jsonOut, "json", false, "print results as JSON (for scripts and 1337tui)")
+	f.BoolVar(&jsonOut, "json", false, "print results as JSON (for scripts)")
 	f.IntSliceVarP(&getIndexes, "get", "g", nil, "send these result numbers to qBittorrent, e.g. --get 1,3")
 
 	f = rootCmd.PersistentFlags()
-	f.StringVarP(&mirror, "mirror", "m", envOr("LEET_MIRROR", "https://1337x.to"), "1337x mirror base URL (env LEET_MIRROR)")
+	f.StringVarP(&mirror, "mirror", "m", envOr("LEET_MIRROR", core.DefaultMirror), "1337x mirror base URL (env LEET_MIRROR)")
 	f.StringVar(&flareURL, "flaresolverr", os.Getenv("FLARESOLVERR_URL"), "FlareSolverr endpoint for bypassing Cloudflare (env FLARESOLVERR_URL)")
 	f.StringVar(&cookie, "cookie", os.Getenv("LEET_COOKIE"), "Cookie header to send, e.g. cf_clearance=... (env LEET_COOKIE)")
 	f.StringVar(&userAgent, "user-agent", os.Getenv("LEET_USER_AGENT"), "User-Agent to send; must match the browser the cookie came from (env LEET_USER_AGENT)")

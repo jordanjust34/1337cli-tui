@@ -3,12 +3,9 @@ package cmd
 import (
 	"errors"
 	"fmt"
-	"net/url"
 	"os"
-	"strings"
 
-	"1337cli/internal/qbit"
-	"1337cli/internal/scraper"
+	"1337cli/internal/core"
 
 	"github.com/spf13/cobra"
 )
@@ -31,55 +28,31 @@ var getCmd = &cobra.Command{
   1337cli get 'magnet:?xt=urn:btih:...' --save-path /downloads/linux`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return sendToQbit(newScraper(), args)
+		return sendToQbit(newService(), args)
 	},
 }
 
-// sendToQbit resolves each target to a magnet link (fetching 1337x pages as
-// needed) and adds it to qBittorrent. It keeps going past individual failures.
-func sendToQbit(sc *scraper.Client, targets []string) error {
+// sendToQbit submits the targets and prints a line per torrent as it goes.
+// It keeps going past individual failures and returns an error counting them.
+func sendToQbit(s *core.Service, targets []string) error {
 	if qbitURL == "" {
 		return errNoQbit
 	}
-	qc := qbit.NewClient(qbitURL, qbitUser, qbitPass)
-	if err := qc.Login(); err != nil {
+	opts := core.AddOptions{SavePath: qbitSavePath, Category: qbitCategory, Paused: qbitPaused}
+	outs, err := s.Submit(targets, opts, func(o core.Outcome) {
+		if o.Err != nil {
+			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", o.Target, o.Err)
+		} else {
+			fmt.Printf("✓ sent to qBittorrent: %s\n", o.Name)
+		}
+	})
+	if err != nil {
 		return err
 	}
-	opts := qbit.AddOptions{SavePath: qbitSavePath, Category: qbitCategory, Paused: qbitPaused}
-
-	failed := 0
-	for _, t := range targets {
-		magnet := t
-		if !strings.HasPrefix(t, "magnet:") {
-			m, err := sc.Magnet(t)
-			if err != nil {
-				fmt.Fprintf(os.Stderr, "✗ %s: %v\n", t, explain(err))
-				failed++
-				continue
-			}
-			magnet = m
-		}
-		if err := qc.AddMagnet(magnet, opts); err != nil {
-			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", t, err)
-			failed++
-			continue
-		}
-		fmt.Printf("✓ sent to qBittorrent: %s\n", magnetName(magnet, t))
-	}
-	if failed > 0 {
+	if failed := core.Failed(outs); failed > 0 {
 		return fmt.Errorf("%d of %d torrent(s) failed", failed, len(targets))
 	}
 	return nil
-}
-
-// magnetName returns the magnet's display name, falling back to the target.
-func magnetName(magnet, fallback string) string {
-	if i := strings.Index(magnet, "?"); i >= 0 {
-		if q, err := url.ParseQuery(magnet[i+1:]); err == nil && q.Get("dn") != "" {
-			return q.Get("dn")
-		}
-	}
-	return fallback
 }
 
 func init() {

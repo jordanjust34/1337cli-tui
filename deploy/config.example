@@ -1,5 +1,5 @@
-# 1337cli settings. Installed to ~/.config/1337cli/config.
-# Environment variables and command-line flags override these.
+# Settings for 1337cli and 1337tui. Installed to ~/.config/1337cli/config.
+# Environment variables (and 1337cli's command-line flags) override these.
 
 # FlareSolverr (from docker-compose.yml in this folder)
 FLARESOLVERR_URL=http://localhost:8191
@@ -14,9 +14,10 @@ QBIT_PASS=
 # e.g. movies -> /media/movies, tv -> /media/tv. Override per download with -c.
 QBIT_CATEGORY=
 
-# Plain download folders (as qBittorrent sees them) to offer in 1337tui next to
-# the categories, comma-separated. For library folders that aren't qBittorrent
-# categories. Picking one sends the torrent with --save-path.
+# NOT IMPLEMENTED YET (planned, LS-13): plain download folders (as qBittorrent
+# sees them) to offer in 1337tui next to the categories, comma-separated. For
+# library folders that aren't qBittorrent categories. Until then, use
+# 1337cli --save-path, or QBIT_SAVE_PATH for a fixed folder.
 # QBIT_FOLDERS=/downloads/movies,/downloads/tvshows,/downloads/anime
 
 # Fixed download folder on the qBittorrent server (overrides the category's path).
