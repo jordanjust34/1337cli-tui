@@ -14,7 +14,7 @@ Lodestone helps a home media server operator find a torrent, choose where it bel
 
 ## Target release scope
 
-The CLI and TUI are independent applications built on the same Go library. An operator can search, review destinations, and submit items with only the TUI installed. Scripts can continue using the CLI and its JSON output.
+The CLI and TUI are independent applications built on the same Go library (`internal/core`). An operator can search, review destinations, and submit items with only the TUI installed. Scripts can continue using the CLI and its JSON output. This scope is implemented; see the status table in the software requirements.
 
 | Capability | Product requirement | Specification |
 | --- | --- | --- |
@@ -26,7 +26,7 @@ The CLI and TUI are independent applications built on the same Go library. An op
 
 ## Pending feature for review
 
-**Choose a plain server folder in the TUI.** An operator may already have a Jellyfin library directory that has no corresponding qBittorrent category. The deployment example advertises `QBIT_FOLDERS`, but the category command currently lists only qBittorrent categories and the TUI builds category arguments. The CLI already supports an explicit save path. LS-13 defines the missing selection workflow.
+**Choose a plain server folder in the TUI.** An operator may already have a Jellyfin library directory that has no corresponding qBittorrent category. The deployment example mentions `QBIT_FOLDERS` (marked not yet implemented), but the category listing returns only qBittorrent categories and the TUI submits only category names. The CLI already supports an explicit save path. LS-13 defines the missing selection workflow.
 
 **Open decision.** When a configured folder has the same display name as a category, how should the picker distinguish them? A proposed default is to show the entry type and full server path so the operator can identify either destination before confirming.
 
