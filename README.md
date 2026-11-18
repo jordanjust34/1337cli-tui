@@ -56,12 +56,12 @@ The config file is `KEY=value` lines at `~/.config/1337cli/config` (Linux) or `~
 | Screen | Keys |
 |---|---|
 | Search | type a query, `enter` search, `esc` back to results, `ctrl+c` quit |
-| Results | `↑/↓` or `j/k` move, `space`/`x` select, `a` select all, `enter` continue, `/` new search, `q` quit |
+| Results | `↑/↓` or `j/k` move, `space`/`x` select, `a` select all, `b` select the most-seeded, `enter` continue, `/` new search, `q` quit |
 | Category | `↑/↓` move, `enter` continue, `esc` back |
 | Confirm | `enter`/`y` send, `p` toggle paused, `esc` back, `q` quit without sending |
 | Done | `enter` new search, `esc` back to results, `q` quit |
 
-If nothing is selected, the highlighted row is sent. Nothing is sent until you confirm. The TUI exits with status 1 if any torrent failed to send.
+The search screen shows whether qBittorrent is reachable. If nothing is selected, the highlighted row is sent. Nothing is sent until you confirm. The TUI exits with status 1 if any torrent failed to send.
 
 ## Using the CLI
 
@@ -71,8 +71,12 @@ If nothing is selected, the highlighted row is sent. Nothing is sent until you c
 1337cli -s ubuntu -p 2               # start at page 2
 1337cli -s ubuntu --json             # JSON array for scripts
 1337cli -s ubuntu -g 1,3 -c linux    # search, then send results 1 and 3
+1337cli -s ubuntu -g 2-5             # ranges, or -g all
+1337cli -s ubuntu --best -c linux    # send the most-seeded result
+1337cli -s ubuntu -i                 # choose numbers (and a category) at a prompt
 
 1337cli get <torrent-page-url|magnet>... [-c movies] [--save-path /dir] [--paused]
+1337cli -s ubuntu --json | jq -r '.[0].url' | 1337cli get -   # read targets from stdin
 1337cli categories [--json]          # list categories and their save paths
 ```
 
@@ -81,7 +85,9 @@ For scripts:
 - Search JSON is an array of objects with `name`, `url`, `seeders`, `leechers`, `date`, `size`, `uploader`. No results is `[]`.
 - `categories --json` is an array of `{"name", "savePath"}`.
 - `get` prints `✓ sent to qBittorrent: <name>` per success on stdout and `✗ <target>: <error>` per failure on stderr. It keeps going after a failure and exits 1 with `N of M torrent(s) failed`.
-- Any error exits 1 with the message on stderr.
+- `--json`, `-g`, `--best` and `-i` can't be combined. `-i` refuses to run without a terminal; scripts should use `-g` or `get -`.
+- When sending, the CLI logs in to qBittorrent before searching, so a wrong URL or password fails immediately.
+- Any error exits 1 with the message on stderr. At the `-i` prompt, pressing enter or Ctrl-D sends nothing and exits 0.
 
 ## Troubleshooting
 
