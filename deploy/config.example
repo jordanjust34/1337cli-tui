@@ -14,6 +14,11 @@ QBIT_PASS=
 # e.g. movies -> /media/movies, tv -> /media/tv. Override per download with -c.
 QBIT_CATEGORY=
 
+# Plain download folders (as qBittorrent sees them) to offer in 1337tui next to
+# the categories, comma-separated. For library folders that aren't qBittorrent
+# categories. Picking one sends the torrent with --save-path.
+# QBIT_FOLDERS=/downloads/movies,/downloads/tvshows,/downloads/anime
+
 # Fixed download folder on the qBittorrent server (overrides the category's path).
 # Usually left empty when categories are set up.
 QBIT_SAVE_PATH=
