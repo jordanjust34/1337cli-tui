@@ -38,6 +38,7 @@ type backend interface {
 	Search(query string, page, limit int) ([]core.Result, error)
 	Categories() ([]core.Category, error)
 	Submit(targets []string, opts core.AddOptions, progress func(core.Outcome)) ([]core.Outcome, error)
+	Ping() (string, error)
 }
 
 type searchDoneMsg struct {
@@ -49,6 +50,11 @@ type searchDoneMsg struct {
 type categoriesMsg struct {
 	cats []core.Category
 	err  error
+}
+
+type pingMsg struct {
+	version string
+	err     error
 }
 
 type submitDoneMsg struct {
@@ -83,6 +89,12 @@ type model struct {
 	catIndex int
 	paused   bool
 
+	// Startup connectivity check; shown on the search screen but never
+	// blocks searching, since 1337x works without qBittorrent.
+	pinged      bool
+	qbitVersion string
+	pingErr     error
+
 	// Result of the last confirmed submission.
 	outcomes  []core.Outcome
 	submitErr error
@@ -111,8 +123,17 @@ func newModel(svc backend, defaults core.AddOptions, limit int) model {
 }
 
 func (m model) Init() tea.Cmd {
-	// Load categories in the background while the user types a query.
-	return tea.Batch(textinput.Blink, m.loadCategories())
+	// Load categories and check qBittorrent in the background while the
+	// user types a query, so a bad URL or password shows up before sending.
+	return tea.Batch(textinput.Blink, m.loadCategories(), m.ping())
+}
+
+func (m model) ping() tea.Cmd {
+	svc := m.svc
+	return func() tea.Msg {
+		v, err := svc.Ping()
+		return pingMsg{v, err}
+	}
 }
 
 func (m model) loadCategories() tea.Cmd {
@@ -187,6 +208,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		if msg.err == nil {
 			m.cats = append([]core.Category{{Name: ""}}, msg.cats...)
 		}
+		return m, nil
+
+	case pingMsg:
+		m.pinged, m.qbitVersion, m.pingErr = true, msg.version, msg.err
 		return m, nil
 
 	case searchDoneMsg:
@@ -298,6 +323,8 @@ func (m model) updateResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 		for i := range m.results {
 			m.selected[i] = all
 		}
+	case "b":
+		m.selectBest()
 	case "enter":
 		if len(m.results) > 0 {
 			m.screen = screenCategory
@@ -305,6 +332,22 @@ func (m model) updateResults(msg tea.Msg) (tea.Model, tea.Cmd) {
 	}
 	m.scroll()
 	return m, nil
+}
+
+// selectBest makes the top-seeded result the only selection and moves the
+// cursor to it.
+func (m *model) selectBest() {
+	best := core.Best(m.results, 1)
+	if len(best) == 0 {
+		return
+	}
+	for i, r := range m.results {
+		if r == best[0] {
+			m.selected = map[int]bool{i: true}
+			m.cursor = i
+			return
+		}
+	}
 }
 
 func (m model) chosenExplicit() []int {
@@ -405,6 +448,12 @@ func (m model) View() string {
 		if m.err != nil {
 			b.WriteString("\n" + errStyle.Render(m.err.Error()) + "\n")
 		}
+		switch {
+		case m.pingErr != nil:
+			b.WriteString("\n" + errStyle.Render("qBittorrent unreachable: "+firstLine(m.pingErr.Error())) + "\n")
+		case m.pinged:
+			b.WriteString("\n" + dimStyle.Render("connected to qBittorrent "+m.qbitVersion) + "\n")
+		}
 		help := "enter search • ctrl+c quit"
 		if len(m.results) > 0 {
 			help = "enter search • esc back to results • ctrl+c quit"
@@ -470,7 +519,7 @@ func (m model) viewResults() string {
 	if len(m.results) > m.listHeight() {
 		b.WriteString(dimStyle.Render(fmt.Sprintf("  %d–%d of %d", m.offset+1, end, len(m.results))) + "\n")
 	}
-	b.WriteString("\n" + dimStyle.Render("↑/↓ move • space select • a all • enter continue • / new search • q quit"))
+	b.WriteString("\n" + dimStyle.Render("↑/↓ move • space select • a all • b best • enter continue • / new search • q quit"))
 	return b.String()
 }
 
