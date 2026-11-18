@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"bufio"
 	"errors"
 	"fmt"
+	"io"
 	"os"
+	"strings"
 
 	"1337cli/internal/core"
 
@@ -22,14 +25,59 @@ var (
 var errNoQbit = errors.New("no qBittorrent server configured: pass --qbit-url http://host:8080, or set QBIT_URL in the environment or " + configPath)
 
 var getCmd = &cobra.Command{
-	Use:   "get <torrent-page-url|magnet>...",
+	Use:   "get <torrent-page-url|magnet|->...",
 	Short: "Send 1337x torrents to qBittorrent and start downloading",
+	Long: `Send 1337x torrents to qBittorrent and start downloading.
+
+A "-" argument reads more targets from stdin, one per line (blank lines and
+lines starting with # are skipped), so search output can be piped in.`,
 	Example: `  1337cli get https://1337x.to/torrent/1699436/Ubuntu-16-04-1-LTS-Desktop-64-bit/
-  1337cli get 'magnet:?xt=urn:btih:...' --save-path /downloads/linux`,
+  1337cli get 'magnet:?xt=urn:btih:...' --save-path /downloads/linux
+  1337cli -s ubuntu --json | jq -r '.[0].url' | 1337cli get - -c linux`,
 	Args: cobra.MinimumNArgs(1),
 	RunE: func(cmd *cobra.Command, args []string) error {
-		return sendToQbit(newService(), args)
+		targets, err := expandTargets(args, cmd.InOrStdin())
+		if err != nil {
+			return err
+		}
+		return sendToQbit(newService(), targets)
 	},
+}
+
+// expandTargets replaces a "-" argument with the targets read from stdin, one
+// per line, keeping the order of the other arguments. Stdin is only read if
+// "-" is present, and "-" is allowed once, since a second one would always be
+// empty.
+func expandTargets(args []string, stdin io.Reader) ([]string, error) {
+	var out []string
+	dashes := 0
+	for _, a := range args {
+		if a != "-" {
+			out = append(out, a)
+			continue
+		}
+		if dashes++; dashes > 1 {
+			return nil, errors.New(`get: "-" (read targets from stdin) can only be given once`)
+		}
+		read := 0
+		sc := bufio.NewScanner(stdin)
+		sc.Buffer(make([]byte, 0, 64*1024), 1024*1024) // magnets with many trackers get long
+		for sc.Scan() {
+			line := strings.TrimSpace(sc.Text())
+			if line == "" || strings.HasPrefix(line, "#") {
+				continue
+			}
+			out = append(out, line)
+			read++
+		}
+		if err := sc.Err(); err != nil {
+			return nil, fmt.Errorf("get -: reading stdin: %w", err)
+		}
+		if read == 0 {
+			return nil, errors.New("get -: no targets on stdin; pipe in page URLs or magnet links, one per line")
+		}
+	}
+	return out, nil
 }
 
 // sendToQbit submits the targets and prints a line per torrent as it goes.
