@@ -1,6 +1,6 @@
 # Plan: choose and send from one CLI invocation
 
-**Status:** implemented on branch `issue/cli-select-and-send` (LS-14), except A8 (live check against a real qBittorrent), which is still to do. Builds on the shared-library refactor (LS-11) on branch `issue/shared-lib`.
+**Status:** implemented on branch `issue/cli-select-and-send` (LS-14), including the A8 live check against a throwaway qBittorrent 5.2.4 container. Builds on the shared-library refactor (LS-11) on branch `issue/shared-lib`.
 
 ## Goal
 
