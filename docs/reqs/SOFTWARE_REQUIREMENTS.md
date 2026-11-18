@@ -2,7 +2,25 @@
 
 **Review draft · November 17, 2026 · Baseline `8679a1a`**
 
-At the reviewed commit, the TUI executes the CLI for searches, category lookups, and submissions. LS-11 defines the planned migration to two independent applications using a shared Go library. LS-13 describes a separate pending destination feature. The acceptance checks below describe the intended behavior and have not been run.
+At the reviewed commit, the TUI executed the CLI for searches, category lookups, and submissions. LS-11 defined the migration to two independent applications using a shared Go library; that is now implemented (see Status). LS-13 describes a separate pending destination feature.
+
+## Status
+
+| ID | State | Evidence |
+| --- | --- | --- |
+| LS-01, LS-03 | Implemented in `internal/core` (`Service.Search`) | `TestSearchPagingAndLimit`, `TestSearchRetriesEmptyPageAndKeepsResults` |
+| LS-02 | Implemented | `TestResultJSONFields` pins the seven field names; `--json` with `--get` checked manually; empty results encode as `[]` in `cmd/root.go` but have no test |
+| LS-04, LS-05 | Implemented in `core.Service.Submit` and `cmd/qbit.go` | `TestSubmitContinuesPastFailures`; manual CLI run against a fake service (exit 1, "1 of 3 torrent(s) failed") |
+| LS-06 | Implemented | `qbit` client tests for autoTMM and save-path override; live qBittorrent routing check not yet run |
+| LS-07 | Implemented (`--paused`, TUI `p`) | `TestNothingSelectedUsesCursorAndDefaults`; live check not yet run |
+| LS-08 | Implemented | `TestConfirmSubmitsOneBatch`, `TestQuitAtConfirmSendsNothing` (recording backend) |
+| LS-09 | Implemented (stale searches dropped by sequence number) | `toConfirm` in `tui_test.go` |
+| LS-10 | Implemented (`core.LoadConfig` + CLI flag defaults) | No automated test yet |
+| LS-11 | Implemented: both binaries call `internal/core`; the TUI no longer needs `1337cli` | Standalone TUI driven in tmux against fake services with no `1337cli` on `PATH`; equivalent CLI flow checked |
+| LS-12 | Implemented | `/ship` verifies the archive listing; install not re-exercised after LS-11 |
+| LS-13 | Pending | — |
+
+Acceptance checks marked "live" above still need a run against a disposable qBittorrent instance.
 
 ## Search and submission
 
@@ -39,6 +57,6 @@ At the reviewed commit, the TUI executes the CLI for searches, category lookups,
 
 ## Verification setup
 
-Use deterministic search fixtures for paging and a recording implementation of the shared library interface for TUI checks. Use a disposable qBittorrent instance with distinct default, category, and override paths to verify actual routing. A Linux distribution torrent added paused is sufficient to inspect destination and start mode.
+Use deterministic search fixtures for paging (`internal/core/core_test.go` generates them against `httptest`) and a recording implementation of the shared library interface for TUI checks (`recorder` in `tui/tui_test.go`, implementing the TUI's `backend` interface). Use a disposable qBittorrent instance with distinct default, category, and override paths to verify actual routing. A Linux distribution torrent added paused is sufficient to inspect destination and start mode.
 
 [Search and selection](https://github.com/jordanjust34/Lodestone/blob/8679a1a/cmd/root.go) · [Submission](https://github.com/jordanjust34/Lodestone/blob/8679a1a/cmd/qbit.go) · [TUI state and controls](https://github.com/jordanjust34/Lodestone/blob/8679a1a/tui/model.go) · [Build and packaging](https://github.com/jordanjust34/Lodestone/blob/8679a1a/Makefile)
