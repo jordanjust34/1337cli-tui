@@ -19,7 +19,7 @@ The user develops on a Mac. Both tools run on a separate Linux mini-PC that also
 
 ```
  ┌──────── 1337cli (main.go, cmd/) ────────┐   ┌──────────── 1337tui (tui/) ───────────┐
- │ root.go   search, table/JSON, -g        │   │ search → pick results → pick category │
+ │ root.go   search, -g/-i/--best, JSON    │   │ search → pick results → pick category │
  │ qbit.go   `get`, qBittorrent flags      │   │ → confirm → send → result screen      │
  │ categories.go  `categories` [--json]    │   │ model.go: screens, `backend` interface│
  │ config.go flags default to env/config   │   │ main.go: config → core.New → run      │
@@ -47,21 +47,23 @@ The user develops on a Mac. Both tools run on a separate Linux mini-PC that also
 1. **Search** (`1337cli -s ubuntu -n 45`, or the TUI's search box): `core.Service.Search` calls `scraper.Client.Search(query, page)` for page after page, until it has `--limit` results or gets a short page (fewer than 20 = last page). An empty page in the middle is retried once, because 1337x sometimes serves one. A later page that fails keeps the results already collected and reports a warning through `Service.Warn` (the CLI prints it to stderr; the TUI drops it).
 2. **Fetch**: `scraper.Client.get` either does a plain HTTP GET, sending `--cookie`/`--user-agent` if set, or POSTs `{"cmd":"request.get"}` to FlareSolverr and uses `solution.response`. Cloudflare's 403/503 bodies are passed to the parser instead of being treated as HTTP errors, so the parser can recognise the challenge page.
 3. **Parse**: `ParseSearch` reads `table.table-list tbody tr`. Name and link come from `td.coll-1 a[href^="/torrent/"]`, seeders from `coll-2`, leechers from `coll-3`, date from `coll-date`, size from `coll-4` (its own text only, since a hidden `<span>` repeats the seeder count), uploader from `coll-5`. The title "Just a moment..." means `ErrChallenge`, which `core.Service.Explain` turns into remediation advice.
-4. **Send** (`get`, `-g`, or confirming in the TUI): `core.Service.Submit` turns each target into a magnet link (`Magnet()` fetches the detail page and takes the first `a[href^="magnet:"]`; anything that already starts with `magnet:` is used as is). It logs in once, then adds each torrent and returns one `Outcome` per target. One failure doesn't stop the rest. The CLI's `sendToQbit` prints a line per outcome and exits non-zero with a count of failures; the TUI shows them on its result screen and exits non-zero if any submission failed.
+4. **Send** (`get`, `-g`, `--best`, `-i`, or confirming in the TUI): the CLI picks targets in `chooseTargets` (`cmd/root.go`): `-g` via `parseSelection` (`cmd/select.go`), `--best` via `core.Best`, `-i` via the stdin prompt in `cmd/prompt.go`. When the root command will send, it calls `core.Service.Ping` *before* searching, so a bad qBittorrent login fails without waiting for FlareSolverr. `get -` reads targets from stdin (`expandTargets`). Then `core.Service.Submit` turns each target into a magnet link (`Magnet()` fetches the detail page and takes the first `a[href^="magnet:"]`; anything that already starts with `magnet:` is used as is). It logs in once, then adds each torrent and returns one `Outcome` per target. One failure doesn't stop the rest. The CLI's `sendToQbit` prints a line per outcome and exits non-zero with a count of failures; the TUI shows them on its result screen and exits non-zero if any submission failed.
 5. **qBittorrent specifics** (`internal/qbit`):
    - Every request sends `Referer`/`Origin` set to the base URL, because of qBittorrent's CSRF check.
    - Login succeeds with "Ok." (4.x) or `204` (5.x). "Fails." or `401` means failure.
    - `paused` and `stopped` are both sent, because 5.x renamed the field.
    - **`autoTMM=true` is sent whenever a category is set without `--save-path`.** Without it, qBittorrent ignores the category's save path and the download misses the Jellyfin library.
    - `409` means the torrent is already added.
-6. **TUI** (`tui/`): Bubble Tea (`charmbracelet/bubbletea` v1). It moves through the screens `search → searching → results → category → confirm → submitting → done`. The model holds a `backend` interface (`Search`, `Categories`, `Submit`) that `*core.Service` implements and tests replace with a recorder. Searches, the category list and the submission run as background `tea.Cmd`s. Each search has a number (`seq`), and results from cancelled or older searches are dropped. Nothing is submitted until the user confirms; leaving the confirm screen sends nothing. Picking "none" uses `QBIT_CATEGORY` if set, and `QBIT_SAVE_PATH` applies as in the CLI. If nothing is selected, the row under the cursor is used.
+6. **TUI** (`tui/`): Bubble Tea (`charmbracelet/bubbletea` v1). It moves through the screens `search → searching → results → category → confirm → submitting → done`. The model holds a `backend` interface (`Search`, `Categories`, `Submit`, `Ping`) that `*core.Service` implements and tests replace with a recorder. Searches, the category list, the startup `Ping` (its error is shown on the search screen) and the submission run as background `tea.Cmd`s. `b` on the results screen selects the top-seeded row (`core.Best`). Each search has a number (`seq`), and results from cancelled or older searches are dropped. Nothing is submitted until the user confirms; leaving the confirm screen sends nothing. Picking "none" uses `QBIT_CATEGORY` if set, and `QBIT_SAVE_PATH` applies as in the CLI. If nothing is selected, the row under the cursor is used.
 
 ## Layout
 
 | Path | Purpose |
 |---|---|
 | `main.go` | Entry point for `1337cli`. Prints the error and exits 1 (Cobra's own error printing is turned off). |
-| `cmd/root.go` | Root command, the search and connection flags, table output, `--json`, `-g`. |
+| `cmd/root.go` | Root command, the search and connection flags, table output, `--json`, `-g`/`--best`/`-i`, `checkSendFlags`, `chooseTargets`. |
+| `cmd/select.go` | `parseSelection`: `-g` and prompt input (numbers, ranges, `all`). |
+| `cmd/prompt.go` | `-i` prompt (`pickTargets`), terminal check. |
 | `cmd/qbit.go` | `get` subcommand, qBittorrent flags (persistent, so they work on every command), `sendToQbit` (prints outcomes, sets the exit status). |
 | `cmd/categories.go` | `categories` subcommand (table or `--json`). |
 | `cmd/config.go` | Calls `core.LoadConfig` from a package-level `var`, so the env is filled before any `init()` reads it; `newService` builds a `core.Service` from the flags. |
@@ -85,8 +87,11 @@ Precedence: **flag > environment variable > config file**. Both binaries read th
 | `-s, --search` | | Extra positional words are appended, so quotes are optional. |
 | `-n, --limit` | | 0 = one page. More than 20 fetches more pages. |
 | `-p, --page` | | Start page. |
-| `--json` | | Machine output for search and `categories`. Can't be combined with `-g`. |
-| `-g, --get` | | Result numbers to send, e.g. `1,3`. |
+| `--json` | | Machine output for search and `categories`. |
+| `-g, --get` | | Results to send: numbers, ranges or `all`, e.g. `1,3`, `2-5`. |
+| `--best` | | Send the result with the most seeders. |
+| `-i, --interactive` | | After the table, prompt (on stderr) for result numbers, then a category if none is set. Needs a terminal on stdin; opt-in only, never automatic. |
+| `get -` | | Read page URLs or magnets from stdin, one per line (`#` comments and blank lines skipped). |
 | `-m, --mirror` | `LEET_MIRROR` | Default `https://1337x.to`. |
 | `--flaresolverr` | `FLARESOLVERR_URL` | `/v1` is appended if missing. |
 | `--cookie`, `--user-agent` | `LEET_COOKIE`, `LEET_USER_AGENT` | Alternative to FlareSolverr. Both must come from the same browser. |
@@ -95,6 +100,8 @@ Precedence: **flag > environment variable > config file**. Both binaries read th
 | `--save-path` | `QBIT_SAVE_PATH` | Overrides the category path (autoTMM is then off). |
 | `--paused` | | |
 | `1337tui -n` | | Results fetched per TUI search (default 20). |
+
+`--json`, `-g`, `--best` and `-i` are mutually exclusive (`checkSendFlags`).
 
 **Not implemented yet:** `QBIT_FOLDERS` (plain server folders offered next to categories, sent as a save path) is commented out in `config.example` and specified as LS-13 in `docs/reqs/SOFTWARE_REQUIREMENTS.md`. Neither binary reads it. Implement it in `core` (e.g. a destination list that merges categories and folders) so both front ends get it.
 
