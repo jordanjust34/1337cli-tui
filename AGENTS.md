@@ -85,6 +85,7 @@ Precedence: **flag > environment variable > config file**. The config file is `K
 | `--qbit-url/-user/-pass` | `QBIT_URL`, `QBIT_USER`, `QBIT_PASS` | An empty user skips login. |
 | `-c, --category` | `QBIT_CATEGORY` | The category's save path decides the Jellyfin library. |
 | `--save-path` | `QBIT_SAVE_PATH` | Overrides the category path (autoTMM is then off). |
+| `categories --folders` | `QBIT_FOLDERS` | Comma-separated server folders (e.g. `/downloads/tvshows`) listed next to the real categories with `"folder":true`. The TUI sends a folder with `--save-path`, not `--category`. Needed because qBittorrent's API only lists real categories. |
 | `--paused` | | |
 | `1337tui --cli`, `-n` | `LEET_CLI` | Where the TUI finds `1337cli`: `LEET_CLI`, then next to itself, then `$PATH`. |
 
