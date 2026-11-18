@@ -3,6 +3,7 @@ package main
 import (
 	"errors"
 	"reflect"
+	"strings"
 	"testing"
 
 	"1337cli/internal/core"
@@ -14,6 +15,7 @@ import (
 type recorder struct {
 	submits []submission
 	failAdd string // target whose submission fails
+	pingErr error
 }
 
 type submission struct {
@@ -24,6 +26,13 @@ type submission struct {
 func (r *recorder) Search(string, int, int) ([]core.Result, error) { return nil, nil }
 
 func (r *recorder) Categories() ([]core.Category, error) { return nil, nil }
+
+func (r *recorder) Ping() (string, error) {
+	if r.pingErr != nil {
+		return "", r.pingErr
+	}
+	return "v5.0.4", nil
+}
 
 func (r *recorder) Submit(targets []string, opts core.AddOptions, _ func(core.Outcome)) ([]core.Outcome, error) {
 	r.submits = append(r.submits, submission{targets, opts})
@@ -160,5 +169,66 @@ func TestNothingSelectedUsesCursorAndDefaults(t *testing.T) {
 	}
 	if !m.failed {
 		t.Fatal("a failed submission should make the TUI exit non-zero")
+	}
+}
+
+func TestBestSelectsTopSeeded(t *testing.T) {
+	rec := &recorder{}
+	m := newModel(rec, core.AddOptions{}, 20)
+	m = send(m, key("x"), key("enter"))
+	m = send(m, searchDoneMsg{seq: m.seq, results: []core.Result{
+		{URL: "u1", Seeders: 5},
+		{URL: "u2", Seeders: 40},
+		{URL: "u3", Seeders: 12},
+		{URL: "u4", Seeders: 40}, // tie: the earlier row wins
+	}})
+	// An earlier manual selection is replaced, not added to.
+	m = send(m, key(" "), key("b"))
+	if m.cursor != 1 || !reflect.DeepEqual(m.chosenExplicit(), []int{1}) {
+		t.Fatalf("cursor = %d selected = %v, want only row 1", m.cursor, m.chosenExplicit())
+	}
+	m = send(m, key("enter"), key("enter")) // category (none), confirm
+	confirm(t, m)
+	if len(rec.submits) != 1 || !reflect.DeepEqual(rec.submits[0].targets, []string{"u2"}) {
+		t.Fatalf("submits = %+v, want just u2", rec.submits)
+	}
+}
+
+// startup runs the model's Init commands and feeds back the ping result.
+func startup(t *testing.T, rec *recorder) model {
+	t.Helper()
+	m := newModel(rec, core.AddOptions{}, 20)
+	batch, ok := m.Init()().(tea.BatchMsg)
+	if !ok {
+		t.Fatal("Init should return a batch")
+	}
+	for _, c := range batch {
+		if c == nil {
+			continue
+		}
+		if msg, ok := c().(pingMsg); ok {
+			return send(m, msg)
+		}
+	}
+	t.Fatal("Init does not ping qBittorrent")
+	return m
+}
+
+func TestPingErrorShownOnSearchScreen(t *testing.T) {
+	m := startup(t, &recorder{pingErr: errors.New("connection refused\ndetails")})
+	v := m.View()
+	if !strings.Contains(v, "qBittorrent unreachable: connection refused") || strings.Contains(v, "details") {
+		t.Fatalf("view should show the first line of the ping error:\n%s", v)
+	}
+	// Searching still works.
+	if m = send(m, key("x"), key("enter")); m.screen != screenSearching {
+		t.Fatalf("screen = %v, want searching", m.screen)
+	}
+}
+
+func TestPingSuccessShowsNoError(t *testing.T) {
+	v := startup(t, &recorder{}).View()
+	if strings.Contains(v, "unreachable") || !strings.Contains(v, "connected to qBittorrent v5.0.4") {
+		t.Fatalf("unexpected view:\n%s", v)
 	}
 }
