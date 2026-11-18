@@ -40,7 +40,7 @@ lines starting with # are skipped), so search output can be piped in.`,
 		if err != nil {
 			return err
 		}
-		return sendToQbit(newService(), targets)
+		return sendToQbit(newService(), targets, addOptions())
 	},
 }
 
@@ -80,13 +80,17 @@ func expandTargets(args []string, stdin io.Reader) ([]string, error) {
 	return out, nil
 }
 
+// addOptions builds the submission options from the qBittorrent flags.
+func addOptions() core.AddOptions {
+	return core.AddOptions{SavePath: qbitSavePath, Category: qbitCategory, Paused: qbitPaused}
+}
+
 // sendToQbit submits the targets and prints a line per torrent as it goes.
 // It keeps going past individual failures and returns an error counting them.
-func sendToQbit(s *core.Service, targets []string) error {
+func sendToQbit(s *core.Service, targets []string, opts core.AddOptions) error {
 	if qbitURL == "" {
 		return errNoQbit
 	}
-	opts := core.AddOptions{SavePath: qbitSavePath, Category: qbitCategory, Paused: qbitPaused}
 	outs, err := s.Submit(targets, opts, func(o core.Outcome) {
 		if o.Err != nil {
 			fmt.Fprintf(os.Stderr, "✗ %s: %v\n", o.Target, o.Err)
