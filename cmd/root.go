@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"os"
 	"strings"
 	"text/tabwriter"
@@ -23,6 +24,8 @@ var (
 	cookie      string
 	userAgent   string
 	getSpecs    []string
+	best        bool
+	interactive bool
 )
 
 var rootCmd = &cobra.Command{
@@ -36,7 +39,9 @@ var rootCmd = &cobra.Command{
   1337cli -s ubuntu -n 10 --get 3          # send result #3 to qBittorrent
   1337cli -s ubuntu --get 1,4 --category linux
   1337cli -s ubuntu --get 2-5              # send results #2 to #5
-  1337cli -s ubuntu -n 5 --get all`,
+  1337cli -s ubuntu -n 5 --get all
+  1337cli -s ubuntu --best -c linux        # send the most-seeded result
+  1337cli -s ubuntu -i                     # choose from the table at a prompt`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	// Without this, Cobra treats extra words as unknown subcommands once "get" exists.
@@ -54,14 +59,21 @@ var rootCmd = &cobra.Command{
 		if limit < 0 {
 			return errors.New("--limit must be 0 or greater")
 		}
-		if jsonOut && len(getSpecs) > 0 {
-			return errors.New("--json can't be combined with --get")
+		if err := checkSendFlags(); err != nil {
+			return err
 		}
-		if len(getSpecs) > 0 && qbitURL == "" {
+		submits := len(getSpecs) > 0 || best || interactive
+		if submits && qbitURL == "" {
 			return errNoQbit
 		}
 
 		s := newService()
+		if submits {
+			// Fail before a search that can take ~15 s per page through FlareSolverr.
+			if _, err := s.Ping(); err != nil {
+				return err
+			}
+		}
 		results, err := s.Search(query, page, limit)
 		if err != nil {
 			return err
@@ -78,20 +90,68 @@ var rootCmd = &cobra.Command{
 		}
 		printResults(results)
 
-		if len(getSpecs) == 0 {
+		if !submits {
 			return nil
 		}
+		opts := addOptions()
+		targets, category, err := chooseTargets(s, cmd.InOrStdin(), results)
+		if err != nil || len(targets) == 0 {
+			return err
+		}
+		if category != "" {
+			opts.Category = category // this run only
+		}
+		fmt.Println()
+		return sendToQbit(s, targets, opts)
+	},
+}
+
+// checkSendFlags rejects combinations of --json, --get, --best and
+// --interactive, which each decide differently what happens after the search.
+func checkSendFlags() error {
+	set := []struct {
+		name string
+		on   bool
+	}{{"--json", jsonOut}, {"--get", len(getSpecs) > 0}, {"--best", best}, {"--interactive", interactive}}
+	for i, a := range set {
+		for _, b := range set[i+1:] {
+			if a.on && b.on {
+				return fmt.Errorf("%s can't be combined with %s", a.name, b.name)
+			}
+		}
+	}
+	if interactive && !stdinIsTerminal() {
+		return errors.New("--interactive needs a terminal; use --get in scripts")
+	}
+	return nil
+}
+
+// chooseTargets returns the page URLs to send, picked by --get, --best or
+// --interactive, and the category chosen at the prompt (empty for none).
+// No targets and no error means the user chose to send nothing.
+func chooseTargets(s *core.Service, stdin io.Reader, results []core.Result) ([]string, string, error) {
+	switch {
+	case len(getSpecs) > 0:
 		picks, err := parseSelection(getSpecs, len(results))
 		if err != nil {
-			return err
+			return nil, "", err
 		}
 		var urls []string
 		for _, i := range picks {
 			urls = append(urls, results[i-1].URL)
 		}
-		fmt.Println()
-		return sendToQbit(s, urls)
-	},
+		return urls, "", nil
+	case best:
+		var urls []string
+		for _, r := range core.Best(results, 1) {
+			urls = append(urls, r.URL)
+		}
+		return urls, "", nil
+	case interactive:
+		fmt.Fprintln(os.Stderr)
+		return pickTargets(stdin, os.Stderr, results, s.Categories, qbitCategory == "" && qbitSavePath == "")
+	}
+	return nil, "", nil
 }
 
 func printResults(results []core.Result) {
@@ -123,6 +183,8 @@ func init() {
 	f.IntVarP(&limit, "limit", "n", 0, "number of entries to return, fetching more pages as needed (0 = one page)")
 	f.BoolVar(&jsonOut, "json", false, "print results as JSON (for scripts)")
 	f.StringSliceVarP(&getSpecs, "get", "g", nil, "send these results to qBittorrent: numbers, ranges or all, e.g. --get 1,3 or --get 2-5")
+	f.BoolVar(&best, "best", false, "send the result with the most seeders to qBittorrent")
+	f.BoolVarP(&interactive, "interactive", "i", false, "after the table, ask which results to send (and the category, if none is set)")
 
 	f = rootCmd.PersistentFlags()
 	f.StringVarP(&mirror, "mirror", "m", envOr("LEET_MIRROR", core.DefaultMirror), "1337x mirror base URL (env LEET_MIRROR)")
