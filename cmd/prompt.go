@@ -11,14 +11,14 @@ import (
 	"text/tabwriter"
 
 	"1337cli/internal/core"
+
+	"github.com/charmbracelet/x/term"
 )
 
 // stdinIsTerminal reports whether stdin is interactive. A variable so tests can
 // run --interactive without a real terminal.
-var stdinIsTerminal = func() bool {
-	fi, err := os.Stdin.Stat()
-	return err == nil && fi.Mode()&os.ModeCharDevice != 0
-}
+// A character-device check isn't enough: /dev/null is one too.
+var stdinIsTerminal = func() bool { return term.IsTerminal(os.Stdin.Fd()) }
 
 // pickTargets asks which results to send and, if needCategory is set, which
 // qBittorrent category to use. Prompts and errors go to out (stderr in the CLI)

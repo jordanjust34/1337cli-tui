@@ -11,17 +11,17 @@ At the reviewed commit, the TUI executed the CLI for searches, category lookups,
 | LS-01, LS-03 | Implemented in `internal/core` (`Service.Search`) | `TestSearchPagingAndLimit`, `TestSearchRetriesEmptyPageAndKeepsResults` |
 | LS-02 | Implemented | `TestResultJSONFields` pins the seven field names; `--json` with `--get` checked manually; empty results encode as `[]` in `cmd/root.go` but have no test |
 | LS-04, LS-05 | Implemented in `core.Service.Submit` and `cmd/qbit.go` | `TestSubmitContinuesPastFailures`; manual CLI run against a fake service (exit 1, "1 of 3 torrent(s) failed") |
-| LS-06 | Implemented | `qbit` client tests for autoTMM and save-path override; live qBittorrent routing check not yet run |
-| LS-07 | Implemented (`--paused`, TUI `p`) | `TestNothingSelectedUsesCursorAndDefaults`; live check not yet run |
+| LS-06 | Implemented | `qbit` client tests for autoTMM and save-path override; live check on qBittorrent 5.2.4: category → `/media/movies` with autoTMM, `--save-path` override → `/downloads/override` |
+| LS-07 | Implemented (`--paused`, TUI `p`) | `TestNothingSelectedUsesCursorAndDefaults`; live check: CLI `--paused` and TUI `p` both arrive as `stoppedDL` |
 | LS-08 | Implemented | `TestConfirmSubmitsOneBatch`, `TestQuitAtConfirmSendsNothing` (recording backend) |
 | LS-09 | Implemented (stale searches dropped by sequence number) | `toConfirm` in `tui_test.go` |
 | LS-10 | Implemented (`core.LoadConfig` + CLI flag defaults) | No automated test yet |
 | LS-11 | Implemented: both binaries call `internal/core`; the TUI no longer needs `1337cli` | Standalone TUI driven in tmux against fake services with no `1337cli` on `PATH`; equivalent CLI flow checked |
 | LS-12 | Implemented | `/ship` verifies the archive listing; install not re-exercised after LS-11 |
-| LS-14 | Implemented (`-g` ranges/`all`, `--best`, `-i`, `get -`, TUI `b`, early login check) | `TestParseSelection`, `TestExpandTargets`, `cmd/prompt_test.go`, `cmd/root_test.go` (end to end against fake 1337x and qBittorrent), `TestBest`, `TestPing`, TUI `TestBestSelectsTopSeeded`; `-i` driven manually in tmux against fakes. Live qBittorrent check not yet run |
+| LS-14 | Implemented (`-g` ranges/`all`, `--best`, `-i`, `get -`, TUI `b`, early login check) | `TestParseSelection`, `TestExpandTargets`, `cmd/prompt_test.go`, `cmd/root_test.go` (end to end against fake 1337x and qBittorrent), `TestBest`, `TestPing`, TUI `TestBestSelectsTopSeeded`; live check on qBittorrent 5.2.4 for `-g`, `--best`, `-i` (tmux), `get -`, duplicate add (exit 1), wrong password failing before any search request, and redirected stdin rejected by `-i` |
 | LS-13 | Pending | — |
 
-Acceptance checks marked "live" above still need a run against a disposable qBittorrent instance.
+Live checks used a disposable qBittorrent container with a fixture-backed fake 1337x; no check has yet run against live 1337x through FlareSolverr since LS-11.
 
 ## Search and submission
 
