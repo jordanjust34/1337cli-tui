@@ -1,33 +1,41 @@
 package main
 
 import (
-	"context"
-	"os"
-	"path/filepath"
+	"errors"
 	"reflect"
-	"runtime"
-	"strings"
 	"testing"
+
+	"1337cli/internal/core"
 
 	tea "github.com/charmbracelet/bubbletea"
 )
 
-func TestShellQuote(t *testing.T) {
-	cases := map[string]string{
-		"https://1337x.to/torrent/1/Ubuntu-16-04/": "https://1337x.to/torrent/1/Ubuntu-16-04/",
-		"movies":      "movies",
-		"tv shows":    "'tv shows'",
-		"it's":        `'it'\''s'`,
-		"":            "''",
-		"$(rm -rf ~)": "'$(rm -rf ~)'",
-		"--category":  "--category",
-		"a;b":         "'a;b'",
-	}
-	for in, want := range cases {
-		if got := shellQuote(in); got != want {
-			t.Errorf("shellQuote(%q) = %s, want %s", in, got, want)
+// recorder is a fake backend that records submissions.
+type recorder struct {
+	submits []submission
+	failAdd string // target whose submission fails
+}
+
+type submission struct {
+	targets []string
+	opts    core.AddOptions
+}
+
+func (r *recorder) Search(string, int, int) ([]core.Result, error) { return nil, nil }
+
+func (r *recorder) Categories() ([]core.Category, error) { return nil, nil }
+
+func (r *recorder) Submit(targets []string, opts core.AddOptions, _ func(core.Outcome)) ([]core.Outcome, error) {
+	r.submits = append(r.submits, submission{targets, opts})
+	var outs []core.Outcome
+	for _, t := range targets {
+		o := core.Outcome{Target: t, Name: t}
+		if t == r.failAdd {
+			o.Err = errors.New("rejected")
 		}
+		outs = append(outs, o)
 	}
+	return outs, nil
 }
 
 func key(s string) tea.KeyMsg {
@@ -44,6 +52,7 @@ func key(s string) tea.KeyMsg {
 	return tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune(s)}
 }
 
+// send feeds messages to the model, discarding the commands it returns.
 func send(m model, msgs ...tea.Msg) model {
 	for _, msg := range msgs {
 		next, _ := m.Update(msg)
@@ -52,14 +61,39 @@ func send(m model, msgs ...tea.Msg) model {
 	return m
 }
 
-func TestFlowBuildsCommand(t *testing.T) {
-	results := []result{
-		{Name: "Superman (2025)", URL: "https://1337x.to/torrent/1/a/"},
-		{Name: "Superman Returns", URL: "https://1337x.to/torrent/2/b/"},
-		{Name: "Superman (1978)", URL: "https://1337x.to/torrent/3/c/"},
+// confirm presses enter on the confirm screen and runs the resulting submit
+// command, as Bubble Tea would, feeding its result back to the model.
+func confirm(t *testing.T, m model) model {
+	t.Helper()
+	next, cmd := m.Update(key("enter"))
+	m = next.(model)
+	if m.screen != screenSubmitting {
+		t.Fatalf("screen = %v, want submitting", m.screen)
 	}
-	m := newModel("1337cli", 20)
-	m = send(m, categoriesMsg{cats: []category{{Name: "movies", SavePath: "/media/movies"}, {Name: "tv", SavePath: "/media/tv"}}})
+	batch, ok := cmd().(tea.BatchMsg)
+	if !ok {
+		t.Fatal("confirm should return a batch of spinner tick and submit")
+	}
+	for _, c := range batch {
+		if msg, ok := c().(submitDoneMsg); ok {
+			return send(m, msg)
+		}
+	}
+	t.Fatal("no submit command in batch")
+	return m
+}
+
+var results = []core.Result{
+	{Name: "Superman (2025)", URL: "https://1337x.to/torrent/1/a/"},
+	{Name: "Superman Returns", URL: "https://1337x.to/torrent/2/b/"},
+	{Name: "Superman (1978)", URL: "https://1337x.to/torrent/3/c/"},
+}
+
+// toConfirm searches, selects #1 and #3, picks "movies", and stops at the confirm screen.
+func toConfirm(t *testing.T, rec *recorder) model {
+	t.Helper()
+	m := newModel(rec, core.AddOptions{}, 20)
+	m = send(m, categoriesMsg{cats: []core.Category{{Name: "movies", SavePath: "/media/movies"}, {Name: "tv", SavePath: "/media/tv"}}})
 
 	m = send(m, key("superman"), key("enter"))
 	if m.screen != screenSearching || m.query != "superman" {
@@ -84,62 +118,47 @@ func TestFlowBuildsCommand(t *testing.T) {
 	if m.screen != screenConfirm {
 		t.Fatalf("screen = %v, want confirm", m.screen)
 	}
-	m = send(m, key("enter"))
+	return m
+}
 
-	want := []string{"get", "https://1337x.to/torrent/1/a/", "https://1337x.to/torrent/3/c/", "--category", "movies"}
-	if !reflect.DeepEqual(m.runArgs, want) {
-		t.Fatalf("runArgs = %q\nwant      %q", m.runArgs, want)
+func TestConfirmSubmitsOneBatch(t *testing.T) {
+	rec := &recorder{}
+	m := confirm(t, toConfirm(t, rec))
+
+	want := []submission{{
+		targets: []string{"https://1337x.to/torrent/1/a/", "https://1337x.to/torrent/3/c/"},
+		opts:    core.AddOptions{Category: "movies"},
+	}}
+	if !reflect.DeepEqual(rec.submits, want) {
+		t.Fatalf("submits = %+v\nwant      %+v", rec.submits, want)
+	}
+	if m.screen != screenDone || m.failed {
+		t.Fatalf("screen = %v failed = %v, want done without failure", m.screen, m.failed)
 	}
 }
 
-func TestNothingSelectedUsesCursorAndQuitRunsNothing(t *testing.T) {
-	m := newModel("1337cli", 20)
+func TestQuitAtConfirmSendsNothing(t *testing.T) {
+	rec := &recorder{}
+	send(toConfirm(t, rec), key("q"))
+	send(toConfirm(t, rec), key("esc"), key("esc"), key("q"))
+	if len(rec.submits) != 0 {
+		t.Fatalf("leaving confirm must not submit, got %+v", rec.submits)
+	}
+}
+
+func TestNothingSelectedUsesCursorAndDefaults(t *testing.T) {
+	rec := &recorder{failAdd: "u2"}
+	m := newModel(rec, core.AddOptions{Category: "linux", SavePath: "/dl"}, 20)
 	m = send(m, key("x"), key("enter"))
-	m = send(m, searchDoneMsg{seq: m.seq, results: []result{{URL: "u1"}, {URL: "u2"}}})
+	m = send(m, searchDoneMsg{seq: m.seq, results: []core.Result{{URL: "u1"}, {URL: "u2"}}})
 	m = send(m, key("down"), key("enter"), key("enter"), key("p"))
-	if got := m.commandArgs(); !reflect.DeepEqual(got, []string{"get", "u2", "--paused"}) {
-		t.Fatalf("commandArgs = %q", got)
-	}
-	m = send(m, key("q"))
-	if m.runArgs != nil {
-		t.Fatalf("quit should not run anything, got %q", m.runArgs)
-	}
-}
+	m = confirm(t, m)
 
-// TestRunJSONWithFakeCLI checks the TUI's contract with the real binary: the
-// arguments it passes and the JSON / error handling.
-func TestRunJSONWithFakeCLI(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("uses a shell script")
+	want := []submission{{targets: []string{"u2"}, opts: core.AddOptions{Category: "linux", SavePath: "/dl", Paused: true}}}
+	if !reflect.DeepEqual(rec.submits, want) {
+		t.Fatalf("submits = %+v\nwant      %+v", rec.submits, want)
 	}
-	dir := t.TempDir()
-	argsFile := filepath.Join(dir, "args")
-	cli := filepath.Join(dir, "1337cli")
-	script := `#!/bin/sh
-printf '%s\n' "$@" > ` + argsFile + `
-case "$1" in
-  --search=fail) echo "blocked by Cloudflare challenge" >&2; exit 1 ;;
-esac
-echo '[{"name":"Movie","url":"https://1337x.to/torrent/9/m/","seeders":5,"size":"1 GB"}]'
-`
-	if err := os.WriteFile(cli, []byte(script), 0o755); err != nil {
-		t.Fatal(err)
-	}
-
-	var rs []result
-	if err := runJSON(context.Background(), cli, searchArgs("-dash query", 30), &rs); err != nil {
-		t.Fatal(err)
-	}
-	if len(rs) != 1 || rs[0].Seeders != 5 || rs[0].URL != "https://1337x.to/torrent/9/m/" {
-		t.Fatalf("results = %+v", rs)
-	}
-	got, _ := os.ReadFile(argsFile)
-	if want := "--search=-dash query\n--limit\n30\n--json\n"; string(got) != want {
-		t.Fatalf("CLI args = %q, want %q", got, want)
-	}
-
-	err := runJSON(context.Background(), cli, searchArgs("fail", 20), &rs)
-	if err == nil || !strings.Contains(err.Error(), "Cloudflare") {
-		t.Fatalf("err = %v, want the CLI's stderr message", err)
+	if !m.failed {
+		t.Fatal("a failed submission should make the TUI exit non-zero")
 	}
 }

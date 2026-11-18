@@ -6,8 +6,6 @@ import (
 	"os"
 	"text/tabwriter"
 
-	"1337cli/internal/qbit"
-
 	"github.com/spf13/cobra"
 )
 
@@ -19,7 +17,7 @@ var categoriesCmd = &cobra.Command{
 		if qbitURL == "" {
 			return errNoQbit
 		}
-		cats, err := qbit.NewClient(qbitURL, qbitUser, qbitPass).Categories()
+		cats, err := newService().Categories()
 		if err != nil {
 			return err
 		}

@@ -1,9 +1,10 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"strings"
+
+	"1337cli/internal/core"
 
 	"github.com/charmbracelet/bubbles/spinner"
 	"github.com/charmbracelet/bubbles/textinput"
@@ -19,6 +20,8 @@ const (
 	screenResults
 	screenCategory
 	screenConfirm
+	screenSubmitting
+	screenDone
 )
 
 var (
@@ -27,23 +30,38 @@ var (
 	selectedStyle = lipgloss.NewStyle().Foreground(lipgloss.Color("42"))
 	dimStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("245"))
 	errStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("203"))
-	cmdStyle      = lipgloss.NewStyle().Foreground(lipgloss.Color("229")).Border(lipgloss.RoundedBorder()).Padding(0, 1)
 )
+
+// backend is the shared library the TUI drives; *core.Service implements it,
+// and tests substitute a recording fake.
+type backend interface {
+	Search(query string, page, limit int) ([]core.Result, error)
+	Categories() ([]core.Category, error)
+	Submit(targets []string, opts core.AddOptions, progress func(core.Outcome)) ([]core.Outcome, error)
+}
 
 type searchDoneMsg struct {
 	seq     int
-	results []result
+	results []core.Result
 	err     error
 }
 
 type categoriesMsg struct {
-	cats []category
+	cats []core.Category
 	err  error
 }
 
+type submitDoneMsg struct {
+	outcomes []core.Outcome
+	err      error
+}
+
 type model struct {
-	cli   string
+	svc   backend
 	limit int
+	// defaults holds the configured category and save path (QBIT_CATEGORY,
+	// QBIT_SAVE_PATH), used when the user picks "no category".
+	defaults core.AddOptions
 
 	screen  screen
 	input   textinput.Model
@@ -54,22 +72,25 @@ type model struct {
 
 	query    string
 	seq      int // identifies the latest search, so stale results are dropped
-	results  []result
+	results  []core.Result
 	selected map[int]bool
 	cursor   int
 	offset   int
 
-	// cats[0] is always "no category" (use the CLI's default from its config).
-	cats     []category
+	// cats[0] is always "no category" (use the configured default).
+	cats     []core.Category
 	catsErr  error
 	catIndex int
 	paused   bool
 
-	// Set when the user confirms; main runs it after the TUI exits.
-	runArgs []string
+	// Result of the last confirmed submission.
+	outcomes  []core.Outcome
+	submitErr error
+	// failed is set once any submission fails, so main can exit non-zero.
+	failed bool
 }
 
-func newModel(cli string, limit int) model {
+func newModel(svc backend, defaults core.AddOptions, limit int) model {
 	ti := textinput.New()
 	ti.Placeholder = "e.g. superman 2025"
 	ti.Prompt = "🔎 "
@@ -79,12 +100,13 @@ func newModel(cli string, limit int) model {
 	sp.Spinner = spinner.Dot
 
 	return model{
-		cli:      cli,
+		svc:      svc,
+		defaults: defaults,
 		limit:    limit,
 		input:    ti,
 		spinner:  sp,
 		selected: map[int]bool{},
-		cats:     []category{{Name: ""}},
+		cats:     []core.Category{{Name: ""}},
 	}
 }
 
@@ -94,27 +116,37 @@ func (m model) Init() tea.Cmd {
 }
 
 func (m model) loadCategories() tea.Cmd {
-	cli := m.cli
+	svc := m.svc
 	return func() tea.Msg {
-		var cats []category
-		err := runJSON(context.Background(), cli, []string{"categories", "--json"}, &cats)
+		cats, err := svc.Categories()
 		return categoriesMsg{cats, err}
 	}
 }
 
 func (m model) search(query string) tea.Cmd {
-	cli, limit, seq := m.cli, m.limit, m.seq
+	svc, limit, seq := m.svc, m.limit, m.seq
 	return func() tea.Msg {
-		var rs []result
-		err := runJSON(context.Background(), cli, searchArgs(query, limit), &rs)
+		rs, err := svc.Search(query, 1, limit)
 		return searchDoneMsg{seq, rs, err}
+	}
+}
+
+func (m model) submit() tea.Cmd {
+	svc, opts := m.svc, m.addOptions()
+	var targets []string
+	for _, r := range m.chosen() {
+		targets = append(targets, r.URL)
+	}
+	return func() tea.Msg {
+		outs, err := svc.Submit(targets, opts, nil)
+		return submitDoneMsg{outs, err}
 	}
 }
 
 // chosen returns the selected results in list order, or the one under the
 // cursor if nothing is explicitly selected.
-func (m model) chosen() []result {
-	var out []result
+func (m model) chosen() []core.Result {
+	var out []core.Result
 	for i, r := range m.results {
 		if m.selected[i] {
 			out = append(out, r)
@@ -128,7 +160,16 @@ func (m model) chosen() []result {
 
 func (m model) category() string { return m.cats[m.catIndex].Name }
 
-func (m model) commandArgs() []string { return getArgs(m.chosen(), m.category(), m.paused) }
+// addOptions is where and how the chosen torrents will be added: the picked
+// category, else the configured default, plus any configured save path.
+func (m model) addOptions() core.AddOptions {
+	opts := m.defaults
+	if c := m.category(); c != "" {
+		opts.Category = c
+	}
+	opts.Paused = m.paused
+	return opts
+}
 
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	switch msg := msg.(type) {
@@ -144,7 +185,7 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case categoriesMsg:
 		m.catsErr = msg.err
 		if msg.err == nil {
-			m.cats = append([]category{{Name: ""}}, msg.cats...)
+			m.cats = append([]core.Category{{Name: ""}}, msg.cats...)
 		}
 		return m, nil
 
@@ -161,8 +202,18 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		m.screen = screenResults
 		return m, nil
 
+	case submitDoneMsg:
+		m.outcomes, m.submitErr = msg.outcomes, msg.err
+		if msg.err != nil || core.Failed(msg.outcomes) > 0 {
+			m.failed = true
+		} else {
+			m.selected = map[int]bool{}
+		}
+		m.screen = screenDone
+		return m, nil
+
 	case spinner.TickMsg:
-		if m.screen != screenSearching {
+		if m.screen != screenSearching && m.screen != screenSubmitting {
 			return m, nil
 		}
 		var cmd tea.Cmd
@@ -184,8 +235,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m.updateCategory(msg)
 	case screenConfirm:
 		return m.updateConfirm(msg)
+	case screenDone:
+		return m.updateDone(msg)
 	}
-	return m, nil
+	return m, nil // screenSubmitting only answers ctrl+c
 }
 
 func (m model) updateSearch(msg tea.Msg) (tea.Model, tea.Cmd) {
@@ -316,8 +369,26 @@ func (m model) updateConfirm(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case "p":
 		m.paused = !m.paused
 	case "enter", "y":
-		m.runArgs = m.commandArgs()
+		m.screen = screenSubmitting
+		return m, tea.Batch(m.spinner.Tick, m.submit())
+	case "q":
 		return m, tea.Quit
+	}
+	return m, nil
+}
+
+func (m model) updateDone(msg tea.Msg) (tea.Model, tea.Cmd) {
+	k, ok := msg.(tea.KeyMsg)
+	if !ok {
+		return m, nil
+	}
+	switch k.String() {
+	case "esc":
+		m.screen = screenResults
+	case "enter", "/":
+		m.screen = screenSearch
+		m.input.Focus()
+		return m, textinput.Blink
 	case "q":
 		return m, tea.Quit
 	}
@@ -352,6 +423,13 @@ func (m model) View() string {
 
 	case screenConfirm:
 		b.WriteString(m.viewConfirm())
+
+	case screenSubmitting:
+		fmt.Fprintf(&b, "%s Sending %d torrent(s) to qBittorrent…\n\n", m.spinner.View(), len(m.chosen()))
+		b.WriteString(dimStyle.Render("ctrl+c quit (torrents already sent stay queued)"))
+
+	case screenDone:
+		b.WriteString(m.viewDone())
 	}
 	return b.String()
 }
@@ -406,7 +484,7 @@ func (m model) viewCategory() string {
 	for i, c := range m.cats {
 		label := c.Name
 		if label == "" {
-			label = "(none — use the CLI's default)"
+			label = "(none — " + m.defaultCategory() + ")"
 		}
 		if c.SavePath != "" {
 			label = fmt.Sprintf("%-*s", nameW, label) + dimStyle.Render("  → "+c.SavePath)
@@ -434,17 +512,48 @@ func (m model) viewConfirm() string {
 	if m.paused {
 		paused = "add paused"
 	}
-	fmt.Fprintf(&b, "\nCategory: %s   Mode: %s\n\n", orNone(m.category()), paused)
-	b.WriteString("Command:\n" + cmdStyle.Width(max(m.width-4, 40)).Render(shellJoin(m.cli, m.commandArgs())) + "\n\n")
-	b.WriteString(dimStyle.Render("enter run • p toggle paused • esc back • q quit without running"))
+	opts := m.addOptions()
+	category := opts.Category
+	if category == "" {
+		category = "(none — server default)"
+	} else if p := m.cats[m.catIndex].SavePath; p != "" && opts.SavePath == "" {
+		category += dimStyle.Render("  → " + p)
+	}
+	fmt.Fprintf(&b, "\nCategory: %s\n", category)
+	if opts.SavePath != "" {
+		fmt.Fprintf(&b, "Save path: %s %s\n", opts.SavePath, dimStyle.Render("(QBIT_SAVE_PATH, overrides the category's path)"))
+	}
+	fmt.Fprintf(&b, "Mode: %s\n\n", paused)
+	b.WriteString(dimStyle.Render("enter send • p toggle paused • esc back • q quit without sending"))
 	return b.String()
 }
 
-func orNone(s string) string {
-	if s == "" {
-		return "(default)"
+// defaultCategory describes what "no category" means with the current config.
+func (m model) defaultCategory() string {
+	if m.defaults.Category != "" {
+		return "use the default, " + m.defaults.Category
 	}
-	return s
+	return "use the server's default folder"
+}
+
+func (m model) viewDone() string {
+	var b strings.Builder
+	if m.submitErr != nil {
+		b.WriteString(errStyle.Render("Nothing sent: "+m.submitErr.Error()) + "\n")
+	} else {
+		for _, o := range m.outcomes {
+			if o.Err != nil {
+				b.WriteString(errStyle.Render("✗ "+o.Target+": "+o.Err.Error()) + "\n")
+			} else {
+				b.WriteString(selectedStyle.Render("✓") + " sent to qBittorrent: " + o.Name + "\n")
+			}
+		}
+		if failed := core.Failed(m.outcomes); failed > 0 {
+			fmt.Fprintf(&b, "\n%d of %d torrent(s) failed.\n", failed, len(m.outcomes))
+		}
+	}
+	b.WriteString("\n" + dimStyle.Render("enter new search • esc back to results • q quit"))
+	return b.String()
 }
 
 func firstLine(s string) string {
