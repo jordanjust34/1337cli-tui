@@ -1,9 +1,12 @@
 package cmd
 
 import (
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"reflect"
 	"strings"
 	"sync"
@@ -216,5 +219,90 @@ func TestRootInteractiveNeedsTerminal(t *testing.T) {
 	want := "--interactive needs a terminal; use --get in scripts"
 	if err := rootCmd.Execute(); err == nil || err.Error() != want {
 		t.Errorf("err = %v, want %q", err, want)
+	}
+}
+
+// stdout captures what f writes to os.Stdout, where the commands print results.
+func stdout(t *testing.T, f func() error) (string, error) {
+	t.Helper()
+	r, w, err := os.Pipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	orig := os.Stdout
+	os.Stdout = w
+	defer func() { os.Stdout = orig }()
+	ferr := f()
+	w.Close()
+	out, _ := io.ReadAll(r)
+	return string(out), ferr
+}
+
+func TestRootJSON(t *testing.T) {
+	site, _ := fakeSite(t, 7)
+	out, err := stdout(t, func() error { return run(t, "-s", "q", "-m", site.URL, "--json") })
+	if err != nil {
+		t.Fatal(err)
+	}
+	var rows []map[string]any
+	if err := json.Unmarshal([]byte(out), &rows); err != nil || len(rows) != 1 {
+		t.Fatalf("output %q: %v", out, err)
+	}
+	for _, k := range []string{"name", "url", "seeders", "leechers", "date", "size", "uploader"} {
+		if _, ok := rows[0][k]; !ok {
+			t.Errorf("JSON result has no %q: %v", k, rows[0])
+		}
+	}
+
+	// No results encode as [] rather than null, so scripts can always iterate.
+	empty, _ := fakeSite(t)
+	out, err = stdout(t, func() error { return run(t, "-s", "q", "-m", empty.URL, "--json") })
+	if err != nil || strings.TrimSpace(out) != "[]" {
+		t.Fatalf("empty search: output %q, err %v; want []", out, err)
+	}
+}
+
+func TestRootValidatesPageAndLimit(t *testing.T) {
+	for args, want := range map[string]string{
+		"-p 0":  "--page must be 1 or greater",
+		"-n -1": "--limit must be 0 or greater",
+	} {
+		err := run(t, append([]string{"-s", "q", "-m", "http://127.0.0.1:1"}, strings.Fields(args)...)...)
+		if err == nil || err.Error() != want {
+			t.Errorf("%s: err = %v, want %q", args, err, want)
+		}
+	}
+}
+
+func TestGetFromStdinReportsFailures(t *testing.T) {
+	site, _ := fakeSite(t)
+	qb, adds := fakeQbit(t)
+	resetFlags(t)
+	t.Cleanup(func() { resetFlags(t) })
+	// The second target 404s; the batch must carry on and count it.
+	rootCmd.SetIn(strings.NewReader(site.URL + "/torrent/1/one/\n# comment\n" + site.URL + "/nope\n"))
+	rootCmd.SetArgs([]string{"get", "-", magnet("three"), "--qbit-url", qb.URL, "-c", "linux"})
+	err := rootCmd.Execute()
+	if err == nil || err.Error() != "1 of 3 torrent(s) failed" {
+		t.Fatalf("err = %v, want the failure count", err)
+	}
+	want := []add{{magnet("one"), "linux"}, {magnet("three"), "linux"}}
+	if !reflect.DeepEqual(*adds, want) {
+		t.Errorf("adds = %v, want %v", *adds, want)
+	}
+}
+
+func TestCategoriesJSON(t *testing.T) {
+	qb, _ := fakeQbit(t)
+	out, err := stdout(t, func() error { return run(t, "categories", "--json", "--qbit-url", qb.URL) })
+	if err != nil {
+		t.Fatal(err)
+	}
+	want := `[{"name":"linux","savePath":"/srv/linux"},{"name":"movies","savePath":"/srv/movies"}]`
+	if strings.TrimSpace(out) != want {
+		t.Errorf("categories --json = %s, want %s", out, want)
+	}
+	if err := run(t, "categories"); err != errNoQbit {
+		t.Errorf("without a server: err = %v, want errNoQbit", err)
 	}
 }

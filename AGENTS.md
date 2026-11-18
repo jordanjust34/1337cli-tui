@@ -122,11 +122,11 @@ General rules:
 
 ### Add a subcommand
 
-Create `cmd/<name>.go` with a `cobra.Command`, and register it in that file's `init()` with `rootCmd.AddCommand`. The root command uses `cobra.ArbitraryArgs` so that `-s two words` works. Keep that, or unquoted multi-word searches break once subcommands exist.
+Create `cmd/<name>.go` with a `cobra.Command`, and register it in that file's `init()` with `rootCmd.AddCommand`. The root command uses `cobra.ArbitraryArgs` so that `-s two words` works. Keep that, or unquoted multi-word searches break once subcommands exist. Test it end to end in `cmd/root_test.go`: `run(t, args...)` resets every flag first (`resetFlags`, since flag values live in package variables), `fakeSite`/`fakeQbit` stand in for 1337x and qBittorrent, and `stdout` captures output.
 
 ### Change JSON output (the CLI's script contract)
 
-`scraper.Result` and `qbit.Category` (re-exported as `core.Result` and `core.Category`) are what `--json` encodes. Scripts parse those field names, so only add fields; never rename or remove one. `TestResultJSONFields` in `internal/core/core_test.go` pins the names, so update it when adding a field. The TUI uses the same structs directly, so it has no separate copy to keep in sync.
+`scraper.Result` and `qbit.Category` (re-exported as `core.Result` and `core.Category`) are what `--json` encodes. Scripts parse those field names, so only add fields; never rename or remove one. `TestResultJSONFields` in `internal/core/core_test.go` pins the names and `TestRootJSON` in `cmd/root_test.go` checks the CLI output, so update them when adding a field. The TUI uses the same structs directly, so it has no separate copy to keep in sync.
 
 ### 1337x changed its HTML
 
@@ -159,13 +159,13 @@ Add it to the `dist` loop in the `Makefile` and to `deploy/install.sh`, then che
 ## Testing
 
 ```sh
-make test          # unit tests: parser fixtures, qbit client vs httptest, core paging/retry/submission vs httptest, JSON field names, TUI flow vs a recording backend
+make test          # unit tests: parser fixtures, qbit client vs httptest, core config/paging/retry/submission vs httptest, CLI commands end to end vs fake 1337x + qBittorrent, -g/-i/get - parsing, TUI flow vs a recording backend
 ```
 
 Live checks, for changes that touch real services:
 
 - **FlareSolverr:** `docker run -d --name flaresolverr -p 8191:8191 ghcr.io/flaresolverr/flaresolverr`, then `FLARESOLVERR_URL=http://localhost:8191 ./1337cli -s ubuntu -n 5`. A page takes about 12 s.
-- **qBittorrent:** `docker run -d --name qbit-test -p 127.0.0.1:18080:18080 -e WEBUI_PORT=18080 -e PUID=1000 -e PGID=1000 lscr.io/linuxserver/qbittorrent`. The temporary admin password is in `docker logs qbit-test`. Wait for the WebUI before logging in. Create categories via `/api/v2/torrents/createCategory`, and create their folders inside the container owned by `abc`. Use small, legal torrents (Linux ISOs) and delete them afterwards with `deleteFiles=true`.
+- **qBittorrent:** `docker run -d --name qbit-test -p 127.0.0.1:18080:18080 -e WEBUI_PORT=18080 -e PUID=1000 -e PGID=1000 lscr.io/linuxserver/qbittorrent`. The temporary admin password is in `docker logs qbit-test`. Wait for the WebUI before logging in. Create categories via `/api/v2/torrents/createCategory`, and create their folders inside the container owned by `abc`. Use small, legal torrents (Linux ISOs) and delete them afterwards with `deleteFiles=true`. To exercise `-g`/`--best`/`-i`/the TUI without touching 1337x, point `LEET_MIRROR` at a tiny local server that serves `internal/scraper/testdata/search.html` for `/search/...` and `detail.html` (an Ubuntu ISO magnet) for `/torrent/...`, and add with `--paused`. Repeated wrong-password logins can get the test client IP-banned by qBittorrent.
 - **TUI:** drive it in `tmux` (`tmux new-session -d -x 120 -y 35 ...`, `send-keys`, `capture-pane -p`). To prove it runs standalone, build it into an empty directory, run it with a `PATH` that has no `1337cli`, and point `LEET_CONFIG` at a config with `LEET_MIRROR`/`QBIT_URL` for the test services.
 - **Install script:** `docker run --rm -v "$PWD/dist/1337cli.tar.gz:/tmp/r.tgz:ro" ubuntu:24.04 sh -c 'cd /root && tar xzf /tmp/r.tgz && ./1337cli/install.sh'`.
 

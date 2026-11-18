@@ -13,9 +13,10 @@ import (
 
 // recorder is a fake backend that records submissions.
 type recorder struct {
-	submits []submission
-	failAdd string // target whose submission fails
-	pingErr error
+	submits   []submission
+	failAdd   string // target whose submission fails
+	submitErr error  // fails the whole batch, e.g. a bad login
+	pingErr   error
 }
 
 type submission struct {
@@ -36,6 +37,9 @@ func (r *recorder) Ping() (string, error) {
 
 func (r *recorder) Submit(targets []string, opts core.AddOptions, _ func(core.Outcome)) ([]core.Outcome, error) {
 	r.submits = append(r.submits, submission{targets, opts})
+	if r.submitErr != nil {
+		return nil, r.submitErr
+	}
 	var outs []core.Outcome
 	for _, t := range targets {
 		o := core.Outcome{Target: t, Name: t}
@@ -169,6 +173,29 @@ func TestNothingSelectedUsesCursorAndDefaults(t *testing.T) {
 	}
 	if !m.failed {
 		t.Fatal("a failed submission should make the TUI exit non-zero")
+	}
+	if v := m.View(); !strings.Contains(v, "✗ u2: rejected") || !strings.Contains(v, "1 of 1 torrent(s) failed") {
+		t.Errorf("done screen doesn't report the failure:\n%s", v)
+	}
+}
+
+func TestSubmitErrorSendsNothing(t *testing.T) {
+	rec := &recorder{submitErr: errors.New("qbittorrent login failed: check username and password")}
+	m := newModel(rec, core.AddOptions{}, 20)
+	m = send(m, key("x"), key("enter"))
+	m = send(m, searchDoneMsg{seq: m.seq, results: []core.Result{{URL: "u1"}}})
+	m = send(m, key("enter"), key("enter"))
+	m = confirm(t, m)
+	if !m.failed || m.screen != screenDone {
+		t.Fatalf("failed = %v screen = %v, want a failed done screen", m.failed, m.screen)
+	}
+	if v := m.View(); !strings.Contains(v, "Nothing sent: qbittorrent login failed") {
+		t.Errorf("done screen doesn't show the batch error:\n%s", v)
+	}
+	// The selection survives a failed batch so the user can retry.
+	m = send(m, key("esc"))
+	if m.screen != screenResults || len(m.chosen()) != 1 {
+		t.Errorf("after esc: screen %v, chosen %d", m.screen, len(m.chosen()))
 	}
 }
 

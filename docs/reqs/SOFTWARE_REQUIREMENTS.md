@@ -8,14 +8,14 @@ At the reviewed commit, the TUI executed the CLI for searches, category lookups,
 
 | ID | State | Evidence |
 | --- | --- | --- |
-| LS-01, LS-03 | Implemented in `internal/core` (`Service.Search`) | `TestSearchPagingAndLimit`, `TestSearchRetriesEmptyPageAndKeepsResults` |
-| LS-02 | Implemented | `TestResultJSONFields` pins the seven field names; `--json` with `--get` checked manually; empty results encode as `[]` in `cmd/root.go` but have no test |
-| LS-04, LS-05 | Implemented in `core.Service.Submit` and `cmd/qbit.go` | `TestSubmitContinuesPastFailures`; manual CLI run against a fake service (exit 1, "1 of 3 torrent(s) failed") |
+| LS-01, LS-03 | Implemented in `internal/core` (`Service.Search`) | `TestSearchPagingAndLimit`, `TestSearchRetriesEmptyPageAndKeepsResults`; CLI flag errors in `TestRootValidatesPageAndLimit` |
+| LS-02 | Implemented | `TestResultJSONFields` pins the seven field names; `TestRootJSON` checks CLI output and that no results print `[]`; `TestRootFlagConflicts` covers `--json` with `--get` |
+| LS-04, LS-05 | Implemented in `core.Service.Submit` and `cmd/qbit.go` | `TestSubmitContinuesPastFailures`; `TestGetFromStdinReportsFailures` runs `get` end to end (one of three fails, the rest are sent, error "1 of 3 torrent(s) failed"); `TestParseSelection`, `TestRootGetSendsRange` |
 | LS-06 | Implemented | `qbit` client tests for autoTMM and save-path override; live check on qBittorrent 5.2.4: category → `/media/movies` with autoTMM, `--save-path` override → `/downloads/override` |
 | LS-07 | Implemented (`--paused`, TUI `p`) | `TestNothingSelectedUsesCursorAndDefaults`; live check: CLI `--paused` and TUI `p` both arrive as `stoppedDL` |
-| LS-08 | Implemented | `TestConfirmSubmitsOneBatch`, `TestQuitAtConfirmSendsNothing` (recording backend) |
+| LS-08 | Implemented | `TestConfirmSubmitsOneBatch`, `TestQuitAtConfirmSendsNothing`, `TestSubmitErrorSendsNothing` (recording backend) |
 | LS-09 | Implemented (stale searches dropped by sequence number) | `toConfirm` in `tui_test.go` |
-| LS-10 | Implemented (`core.LoadConfig` + CLI flag defaults) | No automated test yet |
+| LS-10 | Implemented (`core.LoadConfig` + CLI flag defaults) | `TestLoadConfig` (file parsing, environment beats file); flag beats environment because CLI flag defaults are read from the environment, not separately tested |
 | LS-11 | Implemented: both binaries call `internal/core`; the TUI no longer needs `1337cli` | Standalone TUI driven in tmux against fake services with no `1337cli` on `PATH`; equivalent CLI flow checked |
 | LS-12 | Implemented | `/ship` verifies the archive listing; install not re-exercised after LS-11 |
 | LS-14 | Implemented (`-g` ranges/`all`, `--best`, `-i`, `get -`, TUI `b`, early login check) | `TestParseSelection`, `TestExpandTargets`, `cmd/prompt_test.go`, `cmd/root_test.go` (end to end against fake 1337x and qBittorrent), `TestBest`, `TestPing`, TUI `TestBestSelectsTopSeeded`; live check on qBittorrent 5.2.4 for `-g`, `--best`, `-i` (tmux), `get -`, duplicate add (exit 1), wrong password failing before any search request, and redirected stdin rejected by `-i` |
