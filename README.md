@@ -1,107 +1,60 @@
-# 1337cli / 1337tui
+# Lodestone
 
-Search 1337x from a terminal and send torrents to qBittorrent, so they land in the right Jellyfin library.
+Lodestone searches 1337x from your terminal and sends selected torrents to qBittorrent. Use **1337tui** to browse results over SSH or **1337cli** to search and submit from a script. Both Go programs call the same library in `internal/core`. Either runs on its own.
 
-- **`1337tui`**: interactive. Search, pick results, pick a category, confirm, and it sends them.
-- **`1337cli`**: scriptable. Table or JSON search output, and `get` to send page URLs or magnets.
+For a Jellyfin setup, give each qBittorrent category a save path that Jellyfin watches. Selecting `movies`, for example, sends the torrent to qBittorrent with that category. qBittorrent handles the transfer and shows its progress. Jellyfin handles library scanning.
 
-The two are independent programs built on the same Go library (`internal/core`). Either one works without the other installed.
+## Try it from source
 
-The qBittorrent **category** decides where a download goes: give each category a save path inside a Jellyfin library (e.g. `movies → /media/movies`, `tv → /media/tv`).
-
-## Install (Linux server)
-
-Build the release package on a development machine and copy it over:
+With Git, Make, and the Go toolchain specified in [go.mod](go.mod) installed, run:
 
 ```sh
-make dist                                  # runs tests, builds dist/1337cli.tar.gz
-scp dist/1337cli.tar.gz user@server:~
+git clone https://github.com/jordanjust34/Lodestone.git
+cd Lodestone
+make
+./1337cli -s ubuntu -n 5
 ```
 
-On the server:
+Search alone needs access to the source site. To send a result, configure a reachable qBittorrent Web UI. To browse interactively, run `./1337tui`.
+
+## Configure a destination
+
+Both programs read the same `KEY=value` file. On Linux the default is `~/.config/1337cli/config` (or under `$XDG_CONFIG_HOME` when set). On macOS it is `~/Library/Application Support/1337cli/config`. Set `LEET_CONFIG` to use another filename or path.
+
+```ini
+QBIT_URL=http://localhost:8080
+QBIT_USER=admin
+QBIT_PASS=
+QBIT_CATEGORY=movies
+```
+
+Set the password locally and choose a category that exists on your server. Use the Web UI address reachable **from the machine running Lodestone**. An empty username skips the login request. Keep personal credentials out of version control.
+
+| Setting | Purpose |
+| --- | --- |
+| `QBIT_CATEGORY` | Default qBittorrent category for submissions. |
+| `QBIT_SAVE_PATH` | Explicit directory as qBittorrent sees it. Leave empty to follow the category’s save path. |
+| `LEET_MIRROR` | Base URL for the supported 1337x source. |
+| `FLARESOLVERR_URL` | Endpoint for an existing FlareSolverr service, if configured. |
+
+CLI flags override environment variables, which override file settings. Run `./1337cli categories --json` to check the available categories and server paths. See [config.example](deploy/config.example) for the full template. Its commented `QBIT_FOLDERS` entry describes a planned folder picker.
+
+## Choose and submit
+
+**Interactive terminal.** Start `./1337tui -n 50` to request up to 50 results. Use the arrow keys or `j/k` to move and Space to select rows. With no explicit selection, Enter uses the highlighted row. Pick a category, review the selection, and press Enter to send or `q` to quit at confirmation. Press `p` on the confirmation screen to toggle paused submission.
+
+**Command line.** These examples assume the binaries are on your PATH and the example category exists.
 
 ```sh
-tar xzf 1337cli.tar.gz && cd 1337cli && ./install.sh
+1337cli -s ubuntu -n 10 --json          # inspect results in a script
+1337cli -s ubuntu -i                    # choose results at a terminal prompt
+1337cli -s ubuntu -g 1,3-5 -c linux     # submit numbered results
+1337cli -s ubuntu --best -c linux       # submit the most-seeded result
+1337cli get - --paused < targets.txt    # read page URLs or magnets from stdin
 ```
 
-`install.sh` installs both binaries (to `/usr/local/bin`, or `~/.local/bin` without sudo), creates `~/.config/1337cli/config` from `config.example` if it doesn't exist, and starts FlareSolverr with Docker. It's safe to re-run for upgrades; it keeps your config.
-
-Then edit `~/.config/1337cli/config` and set at least `QBIT_URL`, `QBIT_USER` and `QBIT_PASS`.
-
-## Configuration
-
-Both programs read the same settings. Precedence: **command-line flag (CLI only) > environment variable > config file**.
-
-The config file is `KEY=value` lines at `~/.config/1337cli/config` (Linux) or `~/Library/Application Support/1337cli/config` (macOS). Set `LEET_CONFIG` to use another path.
-
-| Key | CLI flag | Meaning |
-|---|---|---|
-| `QBIT_URL` | `--qbit-url` | qBittorrent Web UI, e.g. `http://localhost:8080` |
-| `QBIT_USER`, `QBIT_PASS` | `--qbit-user`, `--qbit-pass` | Login. Empty user skips login (for "bypass auth on localhost"). |
-| `QBIT_CATEGORY` | `-c, --category` | Default category. In the TUI, picking "none" uses it. |
-| `QBIT_SAVE_PATH` | `--save-path` | Fixed folder on the server; overrides the category's path. Usually empty. |
-| `FLARESOLVERR_URL` | `--flaresolverr` | FlareSolverr endpoint for getting past Cloudflare, e.g. `http://localhost:8191` |
-| `LEET_COOKIE`, `LEET_USER_AGENT` | `--cookie`, `--user-agent` | Alternative to FlareSolverr: a `cf_clearance` cookie and the User-Agent of the browser it came from. |
-| `LEET_MIRROR` | `-m, --mirror` | 1337x mirror. Default `https://1337x.to`. |
-
-`QBIT_FOLDERS` appears in `config.example` but isn't implemented yet.
-
-## Using the TUI
-
-```sh
-1337tui          # 20 results per search
-1337tui -n 50    # more results per search
-```
-
-| Screen | Keys |
-|---|---|
-| Search | type a query, `enter` search, `esc` back to results, `ctrl+c` quit |
-| Results | `↑/↓` or `j/k` move, `space`/`x` select, `a` select all, `b` select the most-seeded, `enter` continue, `/` new search, `q` quit |
-| Category | `↑/↓` move, `enter` continue, `esc` back |
-| Confirm | `enter`/`y` send, `p` toggle paused, `esc` back, `q` quit without sending |
-| Done | `enter` new search, `esc` back to results, `q` quit |
-
-The search screen shows whether qBittorrent is reachable. If nothing is selected, the highlighted row is sent. Nothing is sent until you confirm. The TUI exits with status 1 if any torrent failed to send.
-
-## Using the CLI
-
-```sh
-1337cli -s ubuntu 24.04              # search (quotes optional), one page
-1337cli -s ubuntu -n 50              # fetch pages until 50 results
-1337cli -s ubuntu -p 2               # start at page 2
-1337cli -s ubuntu --json             # JSON array for scripts
-1337cli -s ubuntu -g 1,3 -c linux    # search, then send results 1 and 3
-1337cli -s ubuntu -g 2-5             # ranges, or -g all
-1337cli -s ubuntu --best -c linux    # send the most-seeded result
-1337cli -s ubuntu -i                 # choose numbers (and a category) at a prompt
-
-1337cli get <torrent-page-url|magnet>... [-c movies] [--save-path /dir] [--paused]
-1337cli -s ubuntu --json | jq -r '.[0].url' | 1337cli get -   # read targets from stdin
-1337cli categories [--json]          # list categories and their save paths
-```
-
-For scripts:
-
-- Search JSON is an array of objects with `name`, `url`, `seeders`, `leechers`, `date`, `size`, `uploader`. No results is `[]`.
-- `categories --json` is an array of `{"name", "savePath"}`.
-- `get` prints `✓ sent to qBittorrent: <name>` per success on stdout and `✗ <target>: <error>` per failure on stderr. It keeps going after a failure and exits 1 with `N of M torrent(s) failed`.
-- `--json`, `-g`, `--best` and `-i` can't be combined. `-i` refuses to run without a terminal; scripts should use `-g` or `get -`.
-- When sending, the CLI logs in to qBittorrent before searching, so a wrong URL or password fails immediately.
-- Any error exits 1 with the message on stderr. At the `-i` prompt, pressing enter or Ctrl-D sends nothing and exits 0.
-
-## Troubleshooting
-
-- **"blocked by Cloudflare challenge"**: set `FLARESOLVERR_URL` (and check `docker ps` shows FlareSolverr running), or use `LEET_COOKIE` + `LEET_USER_AGENT`. If FlareSolverr itself starts failing, `docker compose pull && docker compose up -d` in the install folder.
-- **qBittorrent `401` on every request**: the port in `QBIT_URL` must match qBittorrent's own WebUI port. A remapped Docker port fails its Host-header check.
-- **Download lands in the wrong folder**: check the category's save path in qBittorrent (right-click the category > Edit), and that `QBIT_SAVE_PATH` is empty.
-- **Torrent shows `error` in qBittorrent**: qBittorrent can't write to the category's folder; check its owner and permissions.
+Search JSON contains each result’s name, URL, seeders, leechers, date, size, and uploader. An empty search returns `[]`. Choose one of `--json`, `-g`, `--best`, or `-i` per search. Batch submission continues after individual failures and exits nonzero if any item failed.
 
 ## Development
 
-```sh
-make             # build ./1337cli and ./1337tui
-make test        # unit tests
-make dist        # release package
-```
-
-See [`AGENTS.md`](AGENTS.md) for architecture and how to change things, and [`docs/reqs/`](docs/reqs/) for requirements.
+Run `make test` for the Go tests and `make` to build both binaries. The CLI lives in [cmd/](cmd/), the interactive interface in [tui/](tui/), and shared configuration, search, and submission in [internal/core/](internal/core/). The [repository guide](AGENTS.md) explains the request flow. The [requirements](docs/reqs/) describe expected behavior.
