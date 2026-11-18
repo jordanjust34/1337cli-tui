@@ -22,7 +22,7 @@ var (
 	flareURL    string
 	cookie      string
 	userAgent   string
-	getIndexes  []int
+	getSpecs    []string
 )
 
 var rootCmd = &cobra.Command{
@@ -34,7 +34,9 @@ var rootCmd = &cobra.Command{
   1337cli -s ubuntu -n 50
   1337cli -s debian --flaresolverr http://localhost:8191
   1337cli -s ubuntu -n 10 --get 3          # send result #3 to qBittorrent
-  1337cli -s ubuntu --get 1,4 --category linux`,
+  1337cli -s ubuntu --get 1,4 --category linux
+  1337cli -s ubuntu --get 2-5              # send results #2 to #5
+  1337cli -s ubuntu -n 5 --get all`,
 	SilenceUsage:  true,
 	SilenceErrors: true,
 	// Without this, Cobra treats extra words as unknown subcommands once "get" exists.
@@ -52,10 +54,10 @@ var rootCmd = &cobra.Command{
 		if limit < 0 {
 			return errors.New("--limit must be 0 or greater")
 		}
-		if jsonOut && len(getIndexes) > 0 {
+		if jsonOut && len(getSpecs) > 0 {
 			return errors.New("--json can't be combined with --get")
 		}
-		if len(getIndexes) > 0 && qbitURL == "" {
+		if len(getSpecs) > 0 && qbitURL == "" {
 			return errNoQbit
 		}
 
@@ -76,14 +78,15 @@ var rootCmd = &cobra.Command{
 		}
 		printResults(results)
 
-		if len(getIndexes) == 0 {
+		if len(getSpecs) == 0 {
 			return nil
 		}
+		picks, err := parseSelection(getSpecs, len(results))
+		if err != nil {
+			return err
+		}
 		var urls []string
-		for _, i := range getIndexes {
-			if i < 1 || i > len(results) {
-				return fmt.Errorf("--get %d: no such result (have 1-%d)", i, len(results))
-			}
+		for _, i := range picks {
 			urls = append(urls, results[i-1].URL)
 		}
 		fmt.Println()
@@ -119,7 +122,7 @@ func init() {
 	f.IntVarP(&page, "page", "p", 1, "results page to start from")
 	f.IntVarP(&limit, "limit", "n", 0, "number of entries to return, fetching more pages as needed (0 = one page)")
 	f.BoolVar(&jsonOut, "json", false, "print results as JSON (for scripts)")
-	f.IntSliceVarP(&getIndexes, "get", "g", nil, "send these result numbers to qBittorrent, e.g. --get 1,3")
+	f.StringSliceVarP(&getSpecs, "get", "g", nil, "send these results to qBittorrent: numbers, ranges or all, e.g. --get 1,3 or --get 2-5")
 
 	f = rootCmd.PersistentFlags()
 	f.StringVarP(&mirror, "mirror", "m", envOr("LEET_MIRROR", core.DefaultMirror), "1337x mirror base URL (env LEET_MIRROR)")
