@@ -22,6 +22,7 @@ The CLI and TUI are independent applications built on the same Go library (`inte
 | Submission | Accept one or more selections, report which were submitted, and continue if one item in a batch fails. | LS-04, LS-05 |
 | Destination and start mode | Use the chosen qBittorrent category’s server-side path or an explicit CLI path override. Let users add items paused. | LS-06, LS-07 |
 | Interactive review | Support keyboard selection and preview the items, destination, and start mode before dispatch. A cancelled search must never replace a newer result list. | LS-08, LS-09 |
+| One-step CLI selection | A CLI user can search, choose, and send in one command, by result number or range, by most seeders, or at a prompt they ask for, without copying URLs. Scripts are unaffected. Downloads always go through qBittorrent; the tools never download content or show download progress. | LS-14 |
 | Operation and compatibility | Support reusable settings and preserve the CLI contract used by scripts. Ship a Linux package with example configuration. | LS-10 through LS-12 |
 
 ## Pending feature for review
